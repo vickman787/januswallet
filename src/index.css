@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── JANUS brand tokens ───────────────────────────────────────────────── */
+:root {
+  /* Brand palette */
+  --midnight:    #0B0D12;
+  --ivory:       #F1F3F2;
+  --cobalt:      #4D6BFF;
+  --cobalt-hover:#3A55E8;
+  --steel:       #77808F;
+
+  /* Surfaces */
+  --bg:          #0B0D12;
+  --surface:     rgba(255, 255, 255, 0.05);
+  --surface-strong: rgba(255, 255, 255, 0.09);
+  --surface-muted:  #141720;
+
+  /* Text */
+  --ink:         #F1F3F2;
+  --ink-2:       #C8CDD6;
+  --muted:       #77808F;
+  --subtle:      #4E5561;
+
+  /* Borders */
+  --border:      rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  /* Semantic */
+  --success:     #22C55E;
+  --warning:     #F59E0B;
+  --danger:      #EF4444;
+
+  /* Accent */
+  --accent:      #4D6BFF;
+  --accent-hover:#3A55E8;
+  --focus:       rgba(77, 107, 255, 0.4);
+}
+
+/* ── Reset & base ─────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100dvh;
+  background: var(--midnight);
+  color: var(--ivory);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography helpers ───────────────────────────────────────────────── */
+.display {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.03em;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── Focus ring ───────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--subtle); border-radius: 2px; }
+
+/* ── Reduced motion ───────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Sonner toast overrides ───────────────────────────────────────────── */
+[data-sonner-toaster] {
+  --normal-bg: #1A1D28;
+  --normal-border: rgba(255,255,255,0.12);
+  --normal-text: #F1F3F2;
+}
+
+/* ── Tabular numbers for amounts ──────────────────────────────────────── */
+.tabnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Bottom nav safe area ─────────────────────────────────────────────── */
+.pb-nav {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+.bottom-nav-bar {
+  padding-bottom: env(safe-area-inset-bottom);
+}
