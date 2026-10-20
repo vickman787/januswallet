@@ -1,5 +1,7 @@
-import { useAccount, useDisconnect } from 'wagmi'
-import { ConnectKitButton } from 'connectkit'
+import AccountPanel from '../auth/AccountPanel'
+import CreateWalletActions from '../components/CreateWalletActions'
+import { useAccount } from 'wagmi'
+import { useJanusAuth } from '../auth/AccountProvider'
 import { LogOut, User, Shield, Bell, HelpCircle, ExternalLink, Copy, Check } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -9,7 +11,8 @@ const ARC_MAINNET_ID = 5042
 
 export default function SettingsScreen() {
   const { address, isConnected, chainId } = useAccount()
-  const { disconnect } = useDisconnect()
+  const auth = useJanusAuth()
+  const [signingOut, setSigningOut] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const copyAddress = async () => {
@@ -24,7 +27,6 @@ export default function SettingsScreen() {
     {
       title: 'Account',
       items: [
-        { label: 'Profile & username', Icon: User, action: () => toast.info('Profile — coming soon') },
         { label: 'Notifications',      Icon: Bell, action: () => toast.info('Notifications — coming soon') },
         { label: 'Security',           Icon: Shield, action: () => toast.info('Security — coming soon') },
       ],
@@ -43,6 +45,7 @@ export default function SettingsScreen() {
         <h2 className="display font-semibold text-base" style={{ color: '#F1F3F2' }}>Settings</h2>
       </div>
 
+      <AccountPanel />
       {/* Wallet card */}
       <div className="mx-4 mb-4 rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
         {isConnected && address ? (
@@ -83,22 +86,21 @@ export default function SettingsScreen() {
           </>
         ) : (
           <div className="flex flex-col items-center gap-3 py-4">
-            <p className="text-sm" style={{ color: '#77808F' }}>No wallet connected</p>
-            <ConnectKitButton.Custom>
-              {({ show }) => (
-                <button
-                  onClick={show}
-                  className="px-5 py-2 rounded-full text-sm font-semibold transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4D6BFF]"
-                  style={{ background: '#4D6BFF', color: '#fff' }}
-                >
-                  Connect wallet
-                </button>
-              )}
-            </ConnectKitButton.Custom>
+            <p className="text-sm" style={{ color: '#77808F' }}>Create a Privy wallet for Arc Mainnet, or connect an existing wallet.</p>
+            <CreateWalletActions />
           </div>
         )}
       </div>
 
+      {address && <div className="mx-4 mb-4 space-y-3">
+        <button onClick={auth.connectWallet} disabled={!auth.ready} className="janus-secondary w-full disabled:opacity-50">Connect another wallet</button>
+        {auth.wallets.length > 1 && <label className="block text-sm text-[#A8B0BE]">Active payment wallet
+          <select aria-label="Active payment wallet" className="mt-2 w-full bg-[#11151E] rounded-xl border border-white/15 p-3" value={address.toLowerCase()}
+            onChange={event => { void auth.selectWallet(event.target.value).catch(() => toast.error('Wallet selection failed. Try again.')) }}>
+            {auth.wallets.map(wallet => <option key={wallet.address} value={wallet.address.toLowerCase()}>{wallet.label} · {wallet.address.slice(0,6)}…{wallet.address.slice(-4)}</option>)}
+          </select>
+        </label>}
+      </div>}
       {/* Sections */}
       {sections.map(section => (
         <div key={section.title} className="mx-4 mb-4">
@@ -126,15 +128,15 @@ export default function SettingsScreen() {
       ))}
 
       {/* Disconnect */}
-      {isConnected && (
+      {auth.authenticated && (
         <div className="mx-4">
           <button
-            onClick={() => disconnect()}
+            disabled={signingOut} onClick={() => { setSigningOut(true); void auth.logout().catch(() => toast.error('Sign out failed. Try again.')).finally(() => setSigningOut(false)) }}
             className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-sm font-medium transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444]"
             style={{ background: 'rgba(239,68,68,0.06)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.15)' }}
           >
             <LogOut size={16} />
-            Disconnect wallet
+            {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
       )}

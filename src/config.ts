@@ -1,22 +1,9 @@
-/**
- * wagmi configuration
- * Built with Arc Studio — https://studio.arc.io
- */
+import { http } from 'wagmi'
+import { createConfig } from '@privy-io/wagmi'
+import { arc, arcTestnet, mainnet } from 'viem/chains'
 
-import { http, createConfig } from 'wagmi'
-import { mainnet } from 'wagmi/chains'
-import { arc } from 'viem/chains'
-import { injected } from 'wagmi/connectors'
-import { registerChain } from './tracing'
-
-// Pre-register chain RPC URLs so trace events show correct chain names immediately
-registerChain(arc.id, arc.rpcUrls.default.http[0])
-
+// Privy supplies connectors and owns the active wallet lifecycle.
 export const config = createConfig({
-  chains: [arc, mainnet], // mainnet needed for ENS resolution
-  connectors: [injected()],
-  transports: {
-    [arc.id]: http(),
-    [mainnet.id]: http(), // ENS resolution uses mainnet
-  },
+  chains: [arc, arcTestnet, mainnet],
+  transports: { [arc.id]: http(), [arcTestnet.id]: http(), [mainnet.id]: http() },
 })

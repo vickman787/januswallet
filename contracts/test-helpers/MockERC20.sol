@@ -8,6 +8,7 @@ contract MockERC20 {
     string public symbol;
     uint8 public decimals;
 
+    bool public failTransfers;
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -19,6 +20,10 @@ contract MockERC20 {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
+    }
+
+    function setFailTransfers(bool fail) external {
+        failTransfers = fail;
     }
 
     function mint(address to, uint256 amount) external {
@@ -34,6 +39,7 @@ contract MockERC20 {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
+        if (failTransfers) return false;
         require(balanceOf[msg.sender] >= amount, "ERC20: insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
@@ -42,6 +48,7 @@ contract MockERC20 {
     }
 
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        if (failTransfers) return false;
         require(balanceOf[from] >= amount, "ERC20: insufficient balance");
         uint256 allowed = allowance[from][msg.sender];
         if (allowed != type(uint256).max) {

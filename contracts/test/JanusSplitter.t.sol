@@ -298,6 +298,15 @@ contract JanusSplitterTest is Test {
         splitter.createBill(address(0), shares, participants, bytes32(0), block.timestamp + 1);
     }
 
+    function test_CreateBill_RevertSelfRecipient() public {
+        address[] memory participants = new address[](1);
+        participants[0] = alice;
+        uint256[] memory shares = new uint256[](1);
+        shares[0] = 100e6;
+        vm.prank(creator);
+        vm.expectRevert(JanusSplitter.InvalidRecipient.selector);
+        splitter.createBill(address(splitter), shares, participants, bytes32(0), block.timestamp + 1);
+    }
     function test_CreateBill_RevertEmptyParticipants() public {
         address[] memory participants = new address[](0);
         uint256[] memory shares = new uint256[](0);

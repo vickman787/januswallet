@@ -89,7 +89,7 @@ contract JanusSplitter is Ownable, ReentrancyGuard {
         bytes32 description,
         uint256 deadline
     ) external returns (uint256 billId) {
-        if (recipient == address(0)) revert InvalidRecipient();
+        if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
         if (participants.length == 0 || participants.length > MAX_PARTICIPANTS) revert InvalidParticipantsLength();
         if (shares.length != participants.length) revert InvalidArrayLengths();
         if (deadline <= block.timestamp) revert InvalidDeadline();

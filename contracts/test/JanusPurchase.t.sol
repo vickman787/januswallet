@@ -87,7 +87,7 @@ contract JanusHandler is Test {
             JanusPurchase.Status status
         ) = janus.getPurchase(pid);
         if (status != JanusPurchase.Status.Funded) return;
-        if (block.timestamp > rd) return;
+        if (block.timestamp >= rd) return;
         vm.prank(organizer);
         janus.release(pid);
     }
@@ -278,6 +278,98 @@ contract JanusPurchaseTest is Test {
         janus.createPurchase(address(0), TARGET, fDeadline, rDeadline);
     }
 
+    function test_CreatePurchase_RevertSelfRecipient() public {
+        vm.prank(organizer);
+        vm.expectRevert(JanusPurchase.InvalidRecipient.selector);
+        janus.createPurchase(address(janus), TARGET, fDeadline, rDeadline);
+    }
+
+    function test_Release_RevertAtReleaseDeadline() public {
+        bytes32 pid = _createAndFund();
+        vm.warp(rDeadline);
+        vm.prank(organizer);
+        vm.expectRevert(abi.encodeWithSelector(JanusPurchase.ReleaseWindowExpired.selector, pid));
+        janus.release(pid);
+    }
+
+    function test_MarkExpired_AtFundingDeadline() public {
+        bytes32 pid = _createPurchase();
+        vm.warp(fDeadline);
+        janus.markExpired(pid);
+        (,,,,,,,JanusPurchase.Status status) = janus.getPurchase(pid);
+        assertEq(uint8(status), uint8(JanusPurchase.Status.Expired));
+    }
+
+    function test_MarkExpired_AtReleaseDeadline() public {
+        bytes32 pid = _createAndFund();
+        vm.warp(rDeadline);
+        janus.markExpired(pid);
+        (,,,,,,,JanusPurchase.Status status) = janus.getPurchase(pid);
+        assertEq(uint8(status), uint8(JanusPurchase.Status.Expired));
+    }
+    function test_ClaimRefund_FailedTransferDoesNotBlockOtherContributorsOrRetry() public {
+        bytes32 pid = _createPurchase();
+        vm.prank(alice);
+        janus.contribute(pid, TARGET / 2);
+        vm.prank(bob);
+        janus.contribute(pid, TARGET / 2);
+        vm.prank(organizer);
+        janus.cancel(pid);
+
+        usdc.setFailTransfers(true);
+        vm.prank(alice);
+        vm.expectRevert();
+        janus.claimRefund(pid);
+        assertFalse(janus.isRefundClaimed(pid, alice));
+        assertEq(janus.contributionOf(pid, alice), TARGET / 2);
+
+        usdc.setFailTransfers(false);
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        janus.claimRefund(pid);
+        assertEq(usdc.balanceOf(bob) - bobBefore, TARGET / 2);
+        assertFalse(janus.isRefundClaimed(pid, alice));
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        janus.claimRefund(pid);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, TARGET / 2);
+        assertTrue(janus.isRefundClaimed(pid, alice));
+        assertEq(usdc.balanceOf(address(janus)), 0);
+    }
+
+    function test_Release_FailedTransferPreservesCancellationAndRefundRecovery() public {
+        bytes32 pid = _createAndFund();
+        usdc.setFailTransfers(true);
+        vm.prank(organizer);
+        vm.expectRevert();
+        janus.release(pid);
+        (,,,,,,,JanusPurchase.Status status) = janus.getPurchase(pid);
+        assertEq(uint8(status), uint8(JanusPurchase.Status.Funded));
+        assertEq(usdc.balanceOf(address(janus)), TARGET);
+
+        vm.prank(organizer);
+        janus.cancel(pid);
+        usdc.setFailTransfers(false);
+        uint256 beforeRefund = usdc.balanceOf(alice);
+        vm.prank(alice);
+        janus.claimRefund(pid);
+        assertEq(usdc.balanceOf(alice) - beforeRefund, TARGET);
+    }
+
+    function test_Cancel_BlocksReleaseAndNewContributions() public {
+        bytes32 pid = _createAndFund();
+        vm.prank(organizer);
+        janus.cancel(pid);
+        vm.prank(organizer);
+        vm.expectRevert(abi.encodeWithSelector(JanusPurchase.InvalidStatus.selector,
+            pid, JanusPurchase.Status.Cancelled, JanusPurchase.Status.Funded));
+        janus.release(pid);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(JanusPurchase.InvalidStatus.selector,
+            pid, JanusPurchase.Status.Cancelled, JanusPurchase.Status.Funding));
+        janus.contribute(pid, 1);
+    }
     function test_CreatePurchase_RevertZeroTarget() public {
         vm.prank(organizer);
         vm.expectRevert(JanusPurchase.InvalidTargetAmount.selector);

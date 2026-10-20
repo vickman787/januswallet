@@ -76,7 +76,7 @@ contract JanusPurchase is ReentrancyGuard {
         uint40 fundingDeadline,
         uint40 releaseDeadline
     ) external nonReentrant returns (bytes32 purchaseId) {
-        if (recipient == address(0)) revert InvalidRecipient();
+        if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
         if (targetAmount == 0) revert InvalidTargetAmount();
         if (fundingDeadline <= block.timestamp) revert InvalidFundingDeadline();
         if (releaseDeadline <= fundingDeadline) revert InvalidReleaseDeadline();
@@ -141,7 +141,7 @@ contract JanusPurchase is ReentrancyGuard {
         if (purchase.status != Status.Funded) {
             revert InvalidStatus(purchaseId, purchase.status, Status.Funded);
         }
-        if (block.timestamp > purchase.releaseDeadline) revert ReleaseWindowExpired(purchaseId);
+        if (block.timestamp >= purchase.releaseDeadline) revert ReleaseWindowExpired(purchaseId);
 
         uint256 amount = purchase.totalContributed;
         purchase.status = Status.Released;
@@ -167,11 +167,11 @@ contract JanusPurchase is ReentrancyGuard {
         Purchase storage purchase = _requirePurchase(purchaseId);
 
         if (purchase.status == Status.Funding) {
-            if (block.timestamp <= purchase.fundingDeadline || purchase.totalContributed >= purchase.targetAmount) {
+            if (block.timestamp < purchase.fundingDeadline || purchase.totalContributed >= purchase.targetAmount) {
                 revert NotExpired(purchaseId);
             }
         } else if (purchase.status == Status.Funded) {
-            if (block.timestamp <= purchase.releaseDeadline) revert NotExpired(purchaseId);
+            if (block.timestamp < purchase.releaseDeadline) revert NotExpired(purchaseId);
         } else {
             revert InvalidStatus(purchaseId, purchase.status, Status.Funding);
         }

@@ -1,6 +1,6 @@
 import { Wallet, ArrowLeftRight, Inbox, Users, Settings } from 'lucide-react'
 
-export type Screen = 'wallet' | 'activity' | 'inbox' | 'groups' | 'settings'
+export type Screen = 'home' | 'wallet' | 'activity' | 'inbox' | 'groups' | 'settings'
 
 interface BottomNavProps {
   active: Screen
@@ -19,13 +19,19 @@ const tabs: { id: Screen; label: string; Icon: typeof Wallet }[] = [
 export default function BottomNav({ active, onChange, inboxCount = 0 }: BottomNavProps) {
   return (
     <nav
-      className="bottom-nav-bar fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around"
+      className="bottom-nav-bar fixed bottom-3 left-3 right-3 z-40 flex items-center justify-around"
       style={{
         background: 'rgba(11, 13, 18, 0.92)',
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)',
         borderTop: '1px solid rgba(255,255,255,0.07)',
-        height: '72px',
+        minHeight: '72px',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        bottom: 'max(12px, env(safe-area-inset-bottom))',
+        maxWidth: '448px',
+        marginInline: 'auto',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '20px',
       }}
       role="navigation"
       aria-label="Main navigation"
@@ -36,9 +42,9 @@ export default function BottomNav({ active, onChange, inboxCount = 0 }: BottomNa
           <button
             key={id}
             onClick={() => onChange(id)}
-            className="relative flex flex-col items-center gap-1 px-4 py-2 min-w-[44px] min-h-[44px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4D6BFF] rounded-lg"
+            className="relative flex flex-col items-center gap-1 px-2 py-2 flex-1 min-w-0 min-h-[44px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4D6BFF] rounded-lg"
             aria-current={isActive ? 'page' : undefined}
-            aria-label={label}
+            aria-label={id === 'inbox' && inboxCount > 0 ? `Inbox, ${inboxCount} pending` : label}
           >
             <span className="relative">
               <Icon
@@ -58,7 +64,7 @@ export default function BottomNav({ active, onChange, inboxCount = 0 }: BottomNa
                     padding: '0 3px',
                   }}
                 >
-                  {inboxCount > 9 ? '9+' : inboxCount}
+                  {inboxCount > 99 ? '99+' : inboxCount}
                 </span>
               )}
             </span>

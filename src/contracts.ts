@@ -2,16 +2,12 @@
  * JANUS contract config — Arc Mainnet
  *
  * After deploying JanusPurchase.sol to Arc Mainnet (chain ID 5042):
- *   1. Set VITE_JANUS_PURCHASE_ADDRESS in .env to the deployed address.
+ *   1. Set VITE_JANUS_PURCHASE_ADDRESS in .env.local to the verified deployed address.
  *   2. Restart the dev server so the env var is picked up.
  *
- * Deploy command (from your own wallet):
- *   forge create contracts/JanusPurchase.sol:JanusPurchase \
- *     --rpc-url https://rpc.mainnet.arc.io \
- *     --private-key $DEPLOYER_PRIVATE_KEY \
- *     --verify \
- *     --verifier blockscout \
- *     --verifier-url https://explorer.arc.io/api
+ * Prepare deployment with Arc Foundry and an external signer. Verify the
+ * compiled bytecode, Arc USDC interface, chain ID, gas and explorer receipt.
+ * Never put a deployer private key in browser configuration.
  *
  * IMPORTANT: mainnet — real USDC, irreversible. Review the contract and run
  * all tests before deploying. Arc Studio does not deploy to mainnet on your behalf.
@@ -20,8 +16,10 @@
 import janusPurchaseAbiJson from './abi/janusPurchaseAbi.json'
 
 export const ARC_MAINNET_ID = 5042
+export const ARC_TESTNET_ID = 5042002
+export const JANUS_PURCHASE_TESTNET_ADDRESS = '0xbcae6c22c0c3c2509f920613a4900065bfe00442' as const
 
-// Set VITE_JANUS_PURCHASE_ADDRESS=0x... in .env after deploying
+// Set VITE_JANUS_PURCHASE_ADDRESS=0x... in .env.local after verifying the deployment
 export const JANUS_PURCHASE_ADDRESS =
   (import.meta.env.VITE_JANUS_PURCHASE_ADDRESS as `0x${string}` | undefined) ?? undefined
 

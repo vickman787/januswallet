@@ -1,10 +1,28 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
+function canonicalLocalhost(): Plugin {
+  return {
+    name: 'janus-canonical-localhost',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const host = request.headers.host
+        if (host?.startsWith('127.0.0.1:')) {
+          response.statusCode = 307
+          response.setHeader('Location', 'http://localhost:' + host.split(':')[1] + (request.url ?? '/'))
+          response.end()
+          return
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), nodePolyfills()],
+  plugins: [canonicalLocalhost(), react(), nodePolyfills()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -35,7 +53,7 @@ export default defineConfig({
     ],
   },
   server: {
-    allowedHosts: true,
-    cors: true,
+    proxy: { '/api': 'http://127.0.0.1:3001' },
+    cors: false,
   },
 })
