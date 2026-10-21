@@ -1,5 +1,5 @@
 import { isAddress, type Address, type Hash } from 'viem'
-import { parseUsdcInput } from './payments'
+import { parseUsdcInput } from './payments.js'
 
 export type PurchaseSnapshot = {
   organizer: Address
