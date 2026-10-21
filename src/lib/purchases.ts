@@ -16,6 +16,7 @@ export type PurchaseInviteMetadata = {
   title: string
   description: string
   participants: string[]
+  groupId?: string
   recipient: Address
   targetRaw: string
   fundingDeadline: number
@@ -79,10 +80,12 @@ export function readPendingPurchase(wallet?: Address, chainId = 5042): PendingPu
       const row = value.metadata as Record<string, unknown>
       if (!row || typeof row !== 'object' || typeof row.title !== 'string' || typeof row.description !== 'string' ||
         !Array.isArray(row.participants) || !row.participants.every(item => typeof item === 'string') ||
+        (row.groupId !== undefined && (typeof row.groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(row.groupId))) ||
         typeof row.recipient !== 'string' || !isAddress(row.recipient) || typeof row.targetRaw !== 'string' ||
         typeof row.fundingDeadline !== 'number' || typeof row.releaseDeadline !== 'number') return
       metadata = {
         title: row.title, description: row.description, participants: row.participants,
+        ...(typeof row.groupId === 'string' ? { groupId: row.groupId } : {}),
         recipient: row.recipient, targetRaw: row.targetRaw,
         fundingDeadline: row.fundingDeadline, releaseDeadline: row.releaseDeadline,
       }

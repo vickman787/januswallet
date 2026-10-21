@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
 import { erc20Abi, formatUnits, isAddress, parseEventLogs, type Abi, type Address, type Hash } from 'viem'
 import { ARC_MAINNET_ID, ARC_TESTNET_ID, JANUS_PURCHASE_ABI, JANUS_PURCHASE_ADDRESS, JANUS_PURCHASE_TESTNET_ADDRESS } from '../contracts'
@@ -7,6 +8,7 @@ import { parseUsdcInput } from '../lib/payments'
 import { resolveRecipientInput } from '../lib/recipients'
 import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
+import { mergeGroupParticipants, participantInputs, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../lib/groups'
 import {
   clearPendingPurchase, parsePurchaseDraft, parsePurchaseId, purchaseActionAvailability,
   readPendingPurchase, savePendingPurchase, type PendingPurchaseTx, type PurchaseInviteMetadata, type PurchaseSnapshot,
@@ -81,6 +83,17 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
   const [funding, setFunding] = useState('')
   const [release, setRelease] = useState('')
   const [amount, setAmount] = useState('')
+  const [selectedGroupId, setSelectedGroupId] = useState('')
+  const [groupEntries, setGroupEntries] = useState<string[]>([])
+  const [groupNotice, setGroupNotice] = useState('')
+  const groups = useQuery({
+    queryKey: ['janus-groups', auth.subject],
+    enabled: mode === 'create' && auth.authenticated && !!auth.subject,
+    queryFn: ({ signal }) => janusApi<JanusGroupsData>(auth, 'groups', { signal }),
+    staleTime: 10_000,
+    retry: false,
+  })
+  const availableGroups = visibleJanusGroups(groups.data)
 
   const refresh = useCallback(async (purchaseId: Hash) => {
     if (!client || !contract || !address || !token) return
@@ -142,6 +155,7 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
             organizer: address, recipient: metadata.recipient, targetRaw: metadata.targetRaw,
             fundingDeadline: metadata.fundingDeadline, releaseDeadline: metadata.releaseDeadline,
             title: metadata.title, description: metadata.description, participants: metadata.participants,
+            groupId: metadata.groupId,
           },
         })
       }
@@ -188,6 +202,34 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Invalid purchase ID.') }
   }
 
+  function selectGroup(nextId: string) {
+    setError('')
+    setGroupNotice('')
+    setReview(undefined)
+    const withoutPrevious = mergeGroupParticipants(participants, groupEntries, [])
+    if (!nextId) {
+      setSelectedGroupId('')
+      setGroupEntries([])
+      setParticipants(withoutPrevious)
+      return
+    }
+    if (!groups.data) {
+      setError('Groups are still loading. Try again.')
+      return
+    }
+    try {
+      const selected = participantsForGroup(groups.data, nextId, 20)
+      const merged = mergeGroupParticipants(participants, groupEntries, selected.entries)
+      if (participantInputs(merged).length > 20) throw new Error('A purchase supports at most 20 participants including manual additions.')
+      setSelectedGroupId(nextId)
+      setGroupEntries(selected.entries)
+      setParticipants(merged)
+      setGroupNotice('Added ' + selected.entries.length + ' accepted member' + (selected.entries.length === 1 ? '' : 's') + ' from ' + selected.group.name + (selected.excluded ? '. Pending or declined members were excluded.' : '.'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to use this group.')
+    }
+  }
+
   async function reviewCreate() {
     if (!contract) return
     setError(''); setNotice('')
@@ -206,6 +248,7 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
       const draft = parsePurchaseDraft(resolved.address, target, funding, release, contract)
       const metadata: PurchaseInviteMetadata = {
         title: cleanTitle, description: cleanDescription, participants: participantInputs,
+        groupId: selectedGroupId || undefined,
         recipient: draft.recipient, targetRaw: draft.amount.toString(),
         fundingDeadline: draft.fundingDeadline, releaseDeadline: draft.releaseDeadline,
       }
@@ -292,6 +335,15 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
         <p className="text-[#A8B0BE]">On-chain terms are fixed at creation. Invited JANUS users receive this purchase in Inbox after the transaction confirms.</p>
         <label className="field-label">Purchase title<input className="janus-input" value={title} onChange={event => setTitle(event.target.value)} maxLength={120} placeholder="Dinner, group order, event..." /></label>
         <label className="field-label">Description (optional)<textarea className="janus-input min-h-20 resize-y" value={description} onChange={event => setDescription(event.target.value)} maxLength={500} placeholder="What is this purchase for?" /></label>
+        {availableGroups.length > 0 && <label className="field-label">Use a group, optional
+          <select className="janus-input" value={selectedGroupId} onChange={event => selectGroup(event.target.value)}>
+            <option value="">Choose participants manually</option>
+            {availableGroups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+          </select>
+          <span className="text-xs text-[#77808F]">Selecting a group adds its accepted members. You can still edit the participant list.</span>
+        </label>}
+        {groups.isError && <p className="text-xs text-amber-300">Groups are unavailable. Manual participants still work.</p>}
+        {groupNotice && <p role="status" className="text-xs text-emerald-300">{groupNotice}</p>}
         <label className="field-label">Participants<textarea className="janus-input min-h-24 resize-y mono" value={participants} onChange={event => setParticipants(event.target.value)} placeholder="@username, @another_user" autoComplete="off" spellCheck={false} /><span className="text-xs text-[#77808F]">Add 1-20 verified JANUS usernames, separated by commas or new lines.</span></label>
         <label className="field-label">Recipient address or username<input className="janus-input mono" value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x… or @username" autoComplete="off" spellCheck={false} /></label>
         <label className="field-label">Target (USDC)<input className="janus-input" inputMode="decimal" value={target} onChange={event => setTarget(event.target.value)} placeholder="0.00" /></label>

@@ -83,6 +83,18 @@ export function createHandler(deps: Dependencies) {
     return { profile, address: publicProfile.address }
   }
 
+  async function accessibleGroupId(value: unknown, profileId: string) {
+    if (value === undefined || value === null || value === '') return null
+    if (!deps.products || typeof value !== 'string' || !uuid.test(value)) throw new ApiError(400, 'Group is invalid.')
+    const available = await deps.products.groupsFor(profileId)
+    const membership = available.memberships.find(item => item.group_id === value)
+    const group = available.groups.find(item => item.id === value)
+    if (!group || !membership || (membership.role !== 'organizer' && membership.status !== 'accepted')) {
+      throw new ApiError(403, 'This group is no longer available to your account.')
+    }
+    return value
+  }
+
   return async (req: IncomingMessage, res: ServerResponse) => {
     res.setHeader('Content-Type', 'application/json')
     res.setHeader('Cache-Control', 'no-store')
@@ -186,13 +198,14 @@ export function createHandler(deps: Dependencies) {
         const memberIds = resolved.map(item => item.profile.id)
         if (memberIds.includes(profile.id)) throw new ApiError(409, 'Remove your own username or wallet from Participants.')
         if (new Set(memberIds).size !== memberIds.length) throw new ApiError(409, 'Each participant may be invited only once.')
+        const groupId = await accessibleGroupId(body.groupId, profile.id)
         const valid = await deps.verifyPurchaseCreation({
           chainId, contract, hash, purchaseId, organizer, recipient, target,
           fundingDeadline: body.fundingDeadline, releaseDeadline: body.releaseDeadline,
         })
         if (!valid) throw new ApiError(400, 'The transaction does not contain this purchase creation on Arc.')
         const purchase = await deps.products.savePurchase(profile.id, {
-          chainId, contract, onchainId: purchaseId, groupId: null, title, description, txHash: hash,
+          chainId, contract, onchainId: purchaseId, groupId, title, description, txHash: hash,
         }, resolved.map(item => item.profile))
         return reply(201, { purchase, invited: resolved.length })
       }
@@ -297,6 +310,7 @@ export function createHandler(deps: Dependencies) {
           if (typeof body.shareCount !== 'number') throw new ApiError(400, 'Share count is invalid.')
           participantCount = body.shareCount
         }
+        const groupId = kind === 'named' ? await accessibleGroupId(body.groupId, profile.id) : null
         const includeOrganizer = kind === 'named' && body.includeOrganizer !== false
         const recipientIsOrganizer = recipient.profile.id === profile.id
         const divided = divideShares(total, participantCount + (includeOrganizer ? 1 : 0))
@@ -305,7 +319,7 @@ export function createHandler(deps: Dependencies) {
           : Array.from({ length: participantCount }, () => null)
         const payableAmounts = includeOrganizer && recipientIsOrganizer ? divided.slice(1) : divided
         const created = await deps.products.createSplit(
-          profile.id, recipient.address, kind, total.toString(), title, description,
+          profile.id, groupId, recipient.address, kind, total.toString(), title, description,
           payerProfiles,
           payableAmounts,
         )

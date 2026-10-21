@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { formatUnits } from 'viem'
 import { useAccount } from 'wagmi'
 import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
+import { mergeGroupParticipants, participantInputs, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../lib/groups'
 import { parseUsdcInput, splitUsdc } from '../lib/payments'
 import { resolveRecipientInput, type ResolvedRecipient } from '../lib/recipients'
 import Dialog from './Dialog'
@@ -27,6 +29,17 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
   const [created, setCreated] = useState<CreatedSplit>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [selectedGroupId, setSelectedGroupId] = useState('')
+  const [groupEntries, setGroupEntries] = useState<string[]>([])
+  const [groupNotice, setGroupNotice] = useState('')
+  const groups = useQuery({
+    queryKey: ['janus-groups', auth.subject],
+    enabled: auth.authenticated && !!auth.subject,
+    queryFn: ({ signal }) => janusApi<JanusGroupsData>(auth, 'groups', { signal }),
+    staleTime: 10_000,
+    retry: false,
+  })
+  const availableGroups = visibleJanusGroups(groups.data)
 
   function inputs() {
     return participants.split(/\r?\n|,/).map(value => value.trim()).filter(Boolean)
@@ -37,6 +50,35 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
     setOrganizerPaysRecipient(false)
     setCreated(undefined)
   }
+  function selectGroup(nextId: string) {
+    setError('')
+    setGroupNotice('')
+    const withoutPrevious = mergeGroupParticipants(participants, groupEntries, [])
+    if (!nextId) {
+      setSelectedGroupId('')
+      setGroupEntries([])
+      setParticipants(withoutPrevious)
+      resetReview()
+      return
+    }
+    if (!groups.data) {
+      setError('Groups are still loading. Try again.')
+      return
+    }
+    try {
+      const selected = participantsForGroup(groups.data, nextId, 100)
+      const merged = mergeGroupParticipants(participants, groupEntries, selected.entries)
+      if (participantInputs(merged).length > 100) throw new Error('A split supports at most 100 participants including manual additions.')
+      setSelectedGroupId(nextId)
+      setGroupEntries(selected.entries)
+      setParticipants(merged)
+      setGroupNotice('Added ' + selected.entries.length + ' accepted member' + (selected.entries.length === 1 ? '' : 's') + ' from ' + selected.group.name + (selected.excluded ? '. Pending or declined members were excluded.' : '.'))
+      resetReview()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to use this group.')
+    }
+  }
+
   async function calculate() {
     setError(''); resetReview(); setBusy(true)
     try {
@@ -78,6 +120,7 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
           recipient,
           totalRaw: parseUsdcInput(amount).toString(),
           participants: kind === 'named' ? inputs() : undefined,
+          groupId: kind === 'named' && selectedGroupId ? selectedGroupId : undefined,
           includeOrganizer: kind === 'named' ? includeOrganizer : undefined,
           shareCount: kind === 'open' ? Number(count) : undefined,
         },
@@ -103,7 +146,7 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
       <fieldset className="grid grid-cols-2 gap-2">
         <legend className="field-label mb-2">Split type</legend>
         <button type="button" className={kind === 'named' ? 'janus-primary' : 'janus-secondary'} onClick={() => { setKind('named'); resetReview() }}>Named</button>
-        <button type="button" className={kind === 'open' ? 'janus-primary' : 'janus-secondary'} onClick={() => { setKind('open'); resetReview() }}>Open</button>
+        <button type="button" className={kind === 'open' ? 'janus-primary' : 'janus-secondary'} onClick={() => { setKind('open'); selectGroup(''); resetReview() }}>Open</button>
       </fieldset>
       <label className="field-label">Title<input className="janus-input" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); resetReview() }} placeholder="Dinner" required /></label>
       <label className="field-label">Description, optional<input className="janus-input" maxLength={500} value={description} onChange={event => { setDescription(event.target.value); resetReview() }} placeholder="Friday dinner split" /></label>
@@ -116,6 +159,15 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
           <input className="mt-1 h-4 w-4 accent-[#4D6BFF]" type="checkbox" checked={includeOrganizer} onChange={event => { setIncludeOrganizer(event.target.checked); resetReview() }} />
           <span><span className="block text-sm font-medium text-[#F1F3F2]">Include me in this split</span><span className="block mt-1 text-xs text-[#A8B0BE]">On by default. Your portion counts toward the total, but you are not added to the Participants list.</span></span>
         </label>
+        {availableGroups.length > 0 && <label className="field-label">Use a group, optional
+          <select className="janus-input" value={selectedGroupId} onChange={event => selectGroup(event.target.value)}>
+            <option value="">Choose members manually</option>
+            {availableGroups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+          </select>
+          <span className="block mt-2 text-xs text-[#A8B0BE]">Selecting a group adds its accepted members. You can still add or remove participants below.</span>
+        </label>}
+        {groups.isError && <p className="text-xs text-amber-300">Groups are unavailable. Manual participants still work.</p>}
+        {groupNotice && <p role="status" className="text-xs text-emerald-300">{groupNotice}</p>}
         <label className="field-label">Participants
           <textarea className="janus-input min-h-28" value={participants} onChange={event => { setParticipants(event.target.value); resetReview() }}
             placeholder={'@alice\n0x1234…\n@bob'} required />

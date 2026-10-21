@@ -37,3 +37,6 @@ studio-*-progress.ndjson
 Thumbs.db
 .idea/
 .vscode/
+
+.vercel
+.env*

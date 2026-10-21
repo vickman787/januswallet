@@ -119,7 +119,7 @@ export interface ProductStore {
   removeGroupMember(groupId: string, organizerId: string, memberId: string): Promise<boolean>
   leaveGroup(groupId: string, memberId: string): Promise<boolean>
   respondGroup(groupId: string, profileId: string, status: 'accepted' | 'declined'): Promise<boolean>
-  createSplit(ownerId: string, recipient: string, kind: 'named' | 'open', total: string, title: string, description: string, memberProfiles: (ProductProfile | null)[], amounts: string[]): Promise<ProductSplit>
+  createSplit(ownerId: string, groupId: string | null, recipient: string, kind: 'named' | 'open', total: string, title: string, description: string, memberProfiles: (ProductProfile | null)[], amounts: string[]): Promise<ProductSplit>
   split(id: string): Promise<{ split: ProductSplit; shares: ProductShare[] } | null>
   splitsFor(profileId: string): Promise<ProductSplit[]>
   claimShare(splitId: string, index: number, profileId: string, wallet: string): Promise<ProductShare | null>
@@ -255,9 +255,9 @@ export function createProductStore(url: string, key: string): ProductStore {
       const result = rows(await request('group_members?group_id=eq.' + encodeURIComponent(groupId) + '&profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=group_id', 'PATCH', { status }, 'return=representation'))
       return result.length === 1
     },
-    async createSplit(ownerId, recipient, kind, total, title, description, memberProfiles, amounts) {
+    async createSplit(ownerId, groupId, recipient, kind, total, title, description, memberProfiles, amounts) {
       const created = split(await insertOne('splits', {
-        organizer_id: ownerId, recipient_address: recipient, kind, total_raw: total,
+        organizer_id: ownerId, group_id: groupId, recipient_address: recipient, kind, total_raw: total,
         share_count: amounts.length, title, description, chain_id: 5042,
       }))
       try {
