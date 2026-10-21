@@ -29,11 +29,11 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
     return other === escrowAddress ? '' : other
   }).filter(Boolean))].slice(0, 50)
   const identities = useQuery({
-    queryKey: ['janus-wallet-identities', counterparties],
+    queryKey: ['janus-wallet-identities', auth.subject, address?.toLowerCase(), counterparties],
     enabled: auth.authenticated && counterparties.length > 0,
     queryFn: ({ signal }) => janusApi<WalletProfiles>(
       auth,
-      'wallets/resolve?addresses=' + encodeURIComponent(counterparties.join(',')),
+      'me?addresses=' + encodeURIComponent(counterparties.join(',')),
       { signal },
     ),
     staleTime: 5 * 60_000,
@@ -57,6 +57,9 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
       {activity.isPending && <p role="status" className="text-sm text-[#A8B0BE]">Loading USDC transfers…</p>}
       {activity.isError && <p role="alert" className="janus-panel p-4 text-sm text-amber-300">Activity could not be synchronized. Refresh to retry. Existing results may be out of date.</p>}
       {!activity.isPending && !activity.isError && entries.length === 0 && <p className="janus-panel p-5 text-sm text-[#A8B0BE]">No {filter === 'all' ? '' : filter + ' '}transfers in the loaded range. Older transfers may still exist.</p>}
+      {identities.isError && counterparties.length > 0 && <div role="alert" className="janus-panel p-4 text-sm text-amber-300 flex items-center justify-between gap-3">
+        <span>Usernames could not be loaded.</span><button type="button" className="janus-secondary text-xs" onClick={() => void identities.refetch()}>Retry</button>
+      </div>}
       <ul className="space-y-2">{entries.map(entry => {
         const received = entry.direction === 'received'
         const other = received ? entry.from : entry.to
@@ -65,7 +68,7 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
         const identity = entry.direction === 'self' ? 'Your wallet'
           : profile ? '@' + profile.username
             : other.toLowerCase() === escrowAddress ? 'JANUS escrow'
-              : identities.isPending ? 'Resolving username&' : shortAddress(other)
+              : identities.isPending ? 'Resolving username…' : shortAddress(other)
         return <li key={entry.id} className="janus-panel p-4 flex gap-3 items-start">
           {received ? <ArrowDownLeft size={19} className="text-green-400 mt-1 shrink-0" /> : <ArrowUpRight size={19} className="text-[#9BAEFF] mt-1 shrink-0" />}
           <div className="min-w-0 flex-1 text-sm">

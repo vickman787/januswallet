@@ -84,6 +84,16 @@ export function createHandler(deps: Dependencies) {
     return { profile, address: publicProfile.address }
   }
 
+  async function resolveWallets(values: string[]) {
+    if (!deps.products || values.length < 1 || values.length > 50) throw new ApiError(400, 'Add 1 to 50 wallet addresses.')
+    const addresses = [...new Set(values.map(value => walletAddress(value).toLowerCase()))]
+    const resolved = await Promise.all(addresses.map(async address => {
+      const owner = await deps.products!.profileByWallet(address)
+      return owner ? { address, username: owner.username, displayName: owner.display_name } : null
+    }))
+    return resolved.filter(item => item !== null)
+  }
+
   async function accessibleGroupId(value: unknown, profileId: string) {
     if (value === undefined || value === null || value === '') return null
     if (!deps.products || typeof value !== 'string' || !uuid.test(value)) throw new ApiError(400, 'Group is invalid.')
@@ -133,7 +143,9 @@ export function createHandler(deps: Dependencies) {
       const profile = await deps.store.profile(subject)
 
       if (req.method === 'GET' && path === '/api/me') {
-        return reply(200, { profile, wallets: profile ? await deps.store.wallets(profile.id) : [] })
+        const requested = requestUrl.searchParams.get('addresses')
+        const profiles = requested && profile ? await resolveWallets(requested.split(',')) : []
+        return reply(200, { profile, wallets: profile ? await deps.store.wallets(profile.id) : [], profiles })
       }
       if (req.method === 'PUT' && path === '/api/profile') {
         return reply(200, { profile: await deps.store.saveProfile(subject, profileInput(body)) })
@@ -283,13 +295,8 @@ export function createHandler(deps: Dependencies) {
         const input = req.method === 'GET'
           ? requestUrl.searchParams.get('addresses')?.split(',')
           : body.addresses
-        if (!deps.products || !Array.isArray(input) || input.length < 1 || input.length > 50) throw new ApiError(400, 'Add 1 to 50 wallet addresses.')
-        const addresses = [...new Set(input.map(value => walletAddress(value).toLowerCase()))]
-        const resolved = await Promise.all(addresses.map(async address => {
-          const owner = await deps.products!.profileByWallet(address)
-          return owner ? { address, username: owner.username, displayName: owner.display_name } : null
-        }))
-        return reply(200, { profiles: resolved.filter(item => item !== null) })
+        if (!Array.isArray(input) || !input.every(value => typeof value === 'string')) throw new ApiError(400, 'Add 1 to 50 wallet addresses.')
+        return reply(200, { profiles: await resolveWallets(input) })
       }
       if (path === '/api/splits' && req.method === 'GET') {
         if (!deps.products) throw new ApiError(503, 'Split service is not configured.')

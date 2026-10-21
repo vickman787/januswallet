@@ -6,6 +6,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { verifyMessage } from 'viem'
 import { ApiError, createTokenVerifier, createStore, profileInput, type Store, type Challenge, type Profile } from '../server/core.ts'
 import { createHandler } from '../server/handler.ts'
+import type { ProductStore } from '../server/products.ts'
 
 const keys = await generateKeyPair('ES256')
 const publicKey = await exportSPKI(keys.publicKey)
@@ -52,8 +53,14 @@ test('API enforces identity, origin, body limits, wallet proof and replay isolat
       associations.set(address, id)
     },
   }
+  const products = {
+    async profileByWallet(address: string) {
+      const owner = associations.get(address.toLowerCase())
+      return owner ? profiles.get(owner) ?? null : null
+    },
+  } as ProductStore
   const origin = 'http://localhost:5173'
-  const server = createServer(createHandler({ origin, store, verifyToken,
+  const server = createServer(createHandler({ origin, store, products, verifyToken,
     verifyWallet: (message, signature, address) => verifyMessage({ message, signature, address }),
   }))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -81,6 +88,12 @@ test('API enforces identity, origin, body limits, wallet proof and replay isolat
     const results = await Promise.all([request('wallet/verify', 'POST', { id: challenge.id, signature }), request('wallet/verify', 'POST', { id: challenge.id, signature })])
     assert.deepEqual(results.map(r => r.status).sort(), [200, 400])
     assert.equal((await (await request('me')).json()).wallets.length, 1)
+    const resolvedGet = await (await request('wallets/resolve?addresses=' + wallet.address)).json()
+    assert.equal(resolvedGet.profiles[0].username, 'alice')
+    const resolvedViaMe = await (await request('me?addresses=' + wallet.address)).json()
+    assert.equal(resolvedViaMe.profiles[0].username, 'alice')
+    const resolvedPost = await (await request('wallets/resolve', 'POST', { addresses: [wallet.address] })).json()
+    assert.equal(resolvedPost.profiles[0].address, wallet.address.toLowerCase())
     const publicAlice = await (await request('users/alice', 'GET', undefined, 'invalid')).json()
     assert.equal(publicAlice.address, wallet.address.toLowerCase())
     assert.equal((await (await request('me', 'GET', undefined, bob)).json()).wallets.length, 0)
