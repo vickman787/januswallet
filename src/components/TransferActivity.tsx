@@ -31,11 +31,11 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
   const identities = useQuery({
     queryKey: ['janus-wallet-identities', counterparties],
     enabled: auth.authenticated && counterparties.length > 0,
-    queryFn: ({ signal }) => janusApi<WalletProfiles>(auth, 'wallets/resolve', {
-      method: 'POST',
-      body: { addresses: counterparties },
-      signal,
-    }),
+    queryFn: ({ signal }) => janusApi<WalletProfiles>(
+      auth,
+      'wallets/resolve?addresses=' + encodeURIComponent(counterparties.join(',')),
+      { signal },
+    ),
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: true,
     retry: 2,

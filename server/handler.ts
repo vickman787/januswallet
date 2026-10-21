@@ -104,7 +104,8 @@ export function createHandler(deps: Dependencies) {
     try {
       limit('ip:' + req.socket.remoteAddress, 120)
       if (req.headers.origin && req.headers.origin !== deps.origin) throw new ApiError(403, 'Origin is not allowed.')
-      const path = new URL(req.url ?? '/', deps.origin).pathname
+      const requestUrl = new URL(req.url ?? '/', deps.origin)
+      const path = requestUrl.pathname
       if (req.method === 'GET' && path === '/api/health') return reply(200, { status: 'ready' })
 
       const publicUser = /^\/api\/users\/([a-z0-9_]{1,32})$/.exec(path)
@@ -278,9 +279,12 @@ export function createHandler(deps: Dependencies) {
         return reply(200, { status: body.status })
       }
 
-      if (path === '/api/wallets/resolve' && req.method === 'POST') {
-        if (!deps.products || !Array.isArray(body.addresses) || body.addresses.length < 1 || body.addresses.length > 50) throw new ApiError(400, 'Add 1 to 50 wallet addresses.')
-        const addresses = [...new Set(body.addresses.map(value => walletAddress(value).toLowerCase()))]
+      if (path === '/api/wallets/resolve' && (req.method === 'GET' || req.method === 'POST')) {
+        const input = req.method === 'GET'
+          ? requestUrl.searchParams.get('addresses')?.split(',')
+          : body.addresses
+        if (!deps.products || !Array.isArray(input) || input.length < 1 || input.length > 50) throw new ApiError(400, 'Add 1 to 50 wallet addresses.')
+        const addresses = [...new Set(input.map(value => walletAddress(value).toLowerCase()))]
         const resolved = await Promise.all(addresses.map(async address => {
           const owner = await deps.products!.profileByWallet(address)
           return owner ? { address, username: owner.username, displayName: owner.display_name } : null
