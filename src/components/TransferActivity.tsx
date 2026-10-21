@@ -6,7 +6,7 @@ import { ArrowUpRight, ArrowDownLeft, ExternalLink, RefreshCw } from 'lucide-rea
 import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
 import { buildTxExplorerUrl } from '../onchain-facts'
-import { ARC_MAINNET_ID } from '../contracts'
+import { ARC_MAINNET_ID, JANUS_PURCHASE_ADDRESS } from '../contracts'
 import { useTransferActivity } from '../hooks/useTransferActivity'
 
 type WalletProfile = { address: string; username: string; displayName: string }
@@ -22,9 +22,11 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
   const activity = useTransferActivity()
   const [filter, setFilter] = useState<'all' | 'sent' | 'received'>('all')
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
+  const escrowAddress = JANUS_PURCHASE_ADDRESS?.toLowerCase()
   const counterparties = [...new Set(activity.entries.map(entry => {
     if (entry.direction === 'self') return ''
-    return (entry.direction === 'received' ? entry.from : entry.to).toLowerCase()
+    const other = (entry.direction === 'received' ? entry.from : entry.to).toLowerCase()
+    return other === escrowAddress ? '' : other
   }).filter(Boolean))].slice(0, 50)
   const identities = useQuery({
     queryKey: ['janus-wallet-identities', counterparties],
@@ -35,7 +37,8 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
       signal,
     }),
     staleTime: 5 * 60_000,
-    retry: false,
+    refetchOnWindowFocus: true,
+    retry: 2,
   })
   const profileByAddress = new Map((identities.data?.profiles ?? []).map(profile => [profile.address.toLowerCase(), profile]))
   if (!address) return <p className="text-sm text-[#A8B0BE]">Connect your wallet to view activity.</p>
@@ -59,7 +62,10 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
         const other = received ? entry.from : entry.to
         const profile = profileByAddress.get(other.toLowerCase())
         const isRevealed = revealed[entry.id] ?? false
-        const identity = entry.direction === 'self' ? 'Your wallet' : profile ? '@' + profile.username : shortAddress(other)
+        const identity = entry.direction === 'self' ? 'Your wallet'
+          : profile ? '@' + profile.username
+            : other.toLowerCase() === escrowAddress ? 'JANUS escrow'
+              : identities.isPending ? 'Resolving username&' : shortAddress(other)
         return <li key={entry.id} className="janus-panel p-4 flex gap-3 items-start">
           {received ? <ArrowDownLeft size={19} className="text-green-400 mt-1 shrink-0" /> : <ArrowUpRight size={19} className="text-[#9BAEFF] mt-1 shrink-0" />}
           <div className="min-w-0 flex-1 text-sm">
