@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
 import { erc20Abi, formatUnits, isAddress, parseEventLogs, type Abi, type Address, type Hash } from 'viem'
 import { ARC_MAINNET_ID, ARC_TESTNET_ID, JANUS_PURCHASE_ABI, JANUS_PURCHASE_ADDRESS, JANUS_PURCHASE_TESTNET_ADDRESS } from '../contracts'
@@ -51,6 +51,7 @@ function snapshot(value: unknown): PurchaseSnapshot {
 export default function SharedPurchase({ onClose, network = 'mainnet', initialPurchaseId }: { onClose: () => void; network?: 'mainnet' | 'testnet'; initialPurchaseId?: Hash }) {
   const { address, chainId: connectedChainId } = useAccount()
   const auth = useJanusAuth()
+  const queries = useQueryClient()
   const targetChainId = network === 'testnet' ? ARC_TESTNET_ID : ARC_MAINNET_ID
   const networkName = network === 'testnet' ? 'Arc Testnet' : 'Arc Mainnet'
   const client = usePublicClient({ chainId: targetChainId })
@@ -162,6 +163,9 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
       clearPendingPurchase(address, targetChainId); setPending(undefined); setHash(submittedHash); setReview(undefined)
       setNotice(kind === 'approve' ? 'Exact allowance confirmed. Review the contribution next.' : 'Action confirmed on ' + networkName + '.')
       if (kind === 'create') setMode('open')
+      if (kind === 'cancel' || kind === 'markExpired' || kind === 'claimRefund') {
+        await queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] })
+      }
       if (resolvedId) { setIdText(resolvedId); setId(resolvedId); await refresh(resolvedId) }
     } catch {
       setError(chainConfirmed && kind === 'create'

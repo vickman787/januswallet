@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatUnits } from 'viem'
-import { Inbox, RefreshCw, ShoppingBag, SplitSquareVertical, Users } from 'lucide-react'
+import { CircleDollarSign, Inbox, RefreshCw, ShoppingBag, SplitSquareVertical, Users } from 'lucide-react'
 import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
 
@@ -37,13 +37,21 @@ type PurchaseInvite = {
   read_at: string | null
   created_at: string
 }
+type InboxNotification = {
+  id: string
+  kind: string
+  resource_id: string | null
+  read_at: string | null
+  created_at: string
+}
+type RefundNotification = { notification: InboxNotification; purchase: PurchaseInvite['purchase'] }
 type InboxData = {
   splits: InboxSplit[]
   groups: GroupInvite[]
   purchases: PurchaseInvite[]
   requests: unknown[]
   memberships: unknown[]
-  notifications: unknown[]
+  notifications: InboxNotification[]
 }
 
 export default function InboxScreen() {
@@ -62,10 +70,28 @@ export default function InboxScreen() {
   const splits = inbox.data?.splits ?? []
   const groups = inbox.data?.groups ?? []
   const purchases = inbox.data?.purchases ?? []
+  const purchaseById = new Map(purchases.map(item => [item.purchase.id, item.purchase]))
+  const refunds: RefundNotification[] = (inbox.data?.notifications ?? []).flatMap(notification => {
+    if (notification.kind !== 'purchase_refund_cancelled' && notification.kind !== 'purchase_refund_expired') return []
+    const purchase = notification.resource_id ? purchaseById.get(notification.resource_id) : undefined
+    return purchase ? [{ notification, purchase }] : []
+  })
+  const refundPurchaseIds = new Set(refunds.map(item => item.purchase.id))
+  const visiblePurchases = purchases.filter(item => !refundPurchaseIds.has(item.purchase.id))
   async function openPurchase(item: PurchaseInvite) {
     try {
       if (!item.read_at) {
         await janusApi(auth, 'purchases/' + item.purchase.id + '/read', { method: 'POST', body: {} })
+        await queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] })
+      }
+    } finally {
+      window.location.hash = 'purchase=' + item.purchase.chain_id + ':' + item.purchase.onchain_id
+    }
+  }
+  async function openRefund(item: RefundNotification) {
+    try {
+      if (!item.notification.read_at) {
+        await janusApi(auth, 'notifications/' + item.notification.id + '/read', { method: 'POST', body: {} })
         await queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] })
       }
     } finally {
@@ -99,7 +125,7 @@ export default function InboxScreen() {
         <button className="janus-secondary mt-4" onClick={() => { void inbox.refetch() }}>Retry</button>
       </div>}
 
-      {!inbox.isPending && !inbox.error && splits.length === 0 && groups.length === 0 && purchases.length === 0 && <div className="mx-4 rounded-2xl py-16 flex flex-col items-center gap-3"
+      {!inbox.isPending && !inbox.error && splits.length === 0 && groups.length === 0 && visiblePurchases.length === 0 && refunds.length === 0 && <div className="mx-4 rounded-2xl py-16 flex flex-col items-center gap-3"
         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
         <span className="flex items-center justify-center w-12 h-12 rounded-full"
           style={{ background: 'rgba(77,107,255,0.08)', border: '1px solid rgba(77,107,255,0.15)' }}>
@@ -121,8 +147,27 @@ export default function InboxScreen() {
         </li>)}
       </ul>}
 
-      {purchases.length > 0 && <ul className="px-4 space-y-3 mb-3">
-        {purchases.map(item => <li key={item.purchase.id} className="janus-panel p-4">
+      {refunds.length > 0 && <ul className="px-4 space-y-3 mb-3">
+        {refunds.map(item => <li key={item.notification.id} className="janus-panel border border-amber-300/25 p-4">
+          <div className="flex items-start gap-3">
+            <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-300/30 bg-amber-300/10">
+              <CircleDollarSign size={18} className="text-amber-200" />
+              {!item.notification.read_at && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[#4D6BFF]" aria-label="Unread" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-[#F1F3F2] break-words">Refund ready: {item.purchase.title}</p>
+              <p className="mt-1 text-xs text-amber-200">{item.notification.kind === 'purchase_refund_cancelled'
+                ? 'The organizer cancelled this purchase.'
+                : 'This purchase expired before settlement.'}</p>
+              <p className="mt-3 text-sm text-[#A8B0BE]">Your contributed USDC is available to claim from escrow.</p>
+              <button className="janus-primary w-full mt-4" onClick={() => { void openRefund(item) }}>Claim refund</button>
+            </div>
+          </div>
+        </li>)}
+      </ul>}
+
+      {visiblePurchases.length > 0 && <ul className="px-4 space-y-3 mb-3">
+        {visiblePurchases.map(item => <li key={item.purchase.id} className="janus-panel p-4">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#4D6BFF]/25 bg-[#4D6BFF]/10">
               <ShoppingBag size={18} className="text-[#9BAEFF]" />

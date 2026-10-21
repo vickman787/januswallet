@@ -1,12 +1,32 @@
-import { createPublicClient, http, parseEventLogs } from 'viem'
+import { createPublicClient, http, parseEventLogs, type Address, type Hash } from 'viem'
 import { arc, arcTestnet } from 'viem/chains'
 import { hasExpectedTransfer } from '../src/lib/payments.js'
+import { purchaseRefundNotice } from '../src/lib/purchases.js'
 import { createTokenVerifier, createStore } from './core.js'
 import { createHandler } from './handler.js'
-import { createProductStore } from './products.js'
+import { createProductStore, type ProductRefundState } from './products.js'
 
 const arcUsdc = '0x3600000000000000000000000000000000000000' as const
 const testnetPurchase = '0xbcae6c22c0c3c2509f920613a4900065bfe00442'
+const purchaseStateAbi = [{
+  type: 'function', name: 'getPurchase', stateMutability: 'view',
+  inputs: [{ name: 'purchaseId', type: 'bytes32' }],
+  outputs: [
+    { name: 'organizer', type: 'address' }, { name: 'recipient', type: 'address' },
+    { name: 'usdcToken', type: 'address' }, { name: 'targetAmount', type: 'uint256' },
+    { name: 'totalContributed', type: 'uint256' }, { name: 'fundingDeadline', type: 'uint40' },
+    { name: 'releaseDeadline', type: 'uint40' }, { name: 'status', type: 'uint8' },
+  ],
+}, {
+  type: 'function', name: 'contributionOf', stateMutability: 'view',
+  inputs: [{ name: 'purchaseId', type: 'bytes32' }, { name: 'contributor', type: 'address' }],
+  outputs: [{ name: '', type: 'uint256' }],
+}, {
+  type: 'function', name: 'isRefundClaimed', stateMutability: 'view',
+  inputs: [{ name: 'purchaseId', type: 'bytes32' }, { name: 'contributor', type: 'address' }],
+  outputs: [{ name: '', type: 'bool' }],
+}] as const
+
 const purchaseCreatedAbi = [{
   type: 'event', name: 'PurchaseCreated',
   inputs: [
@@ -45,6 +65,37 @@ export function createJanusHandler() {
     verifyTransfer: async (hash, from, to, amount) => {
       const receipt = await client.getTransactionReceipt({ hash })
       return receipt.status === 'success' && hasExpectedTransfer(receipt.logs, arcUsdc, from, to, amount)
+    },
+    purchaseRefundStates: async (purchases, wallets) => {
+      if (!wallets.length) return []
+      const states: ProductRefundState[] = []
+      for (let offset = 0; offset < purchases.length; offset += 6) {
+        const batch = await Promise.allSettled(purchases.slice(offset, offset + 6).map(async purchase => {
+          const expected = purchase.chain_id === 5042002 ? testnetPurchase : process.env.JANUS_PURCHASE_ADDRESS?.trim().toLowerCase()
+          if (!expected || purchase.contract_address.toLowerCase() !== expected) throw new Error('Unexpected purchase contract.')
+          const purchaseClient = purchase.chain_id === 5042002 ? testnetClient : client
+          const contract = purchase.contract_address as Address
+          const purchaseId = purchase.onchain_id as Hash
+          const current = await purchaseClient.readContract({
+            address: contract, abi: purchaseStateAbi, functionName: 'getPurchase', args: [purchaseId],
+          })
+          const status = Number(current[7])
+          if (status !== 3 && status !== 4) return { purchaseId: purchase.id, reason: null } satisfies ProductRefundState
+          const contributions = await Promise.all(wallets.map(async wallet => {
+            const [amount, claimed] = await Promise.all([
+              purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'contributionOf', args: [purchaseId, wallet] }),
+              purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'isRefundClaimed', args: [purchaseId, wallet] }),
+            ])
+            return { amount: BigInt(amount), claimed }
+          }))
+          return {
+            purchaseId: purchase.id,
+            reason: purchaseRefundNotice(status, contributions),
+          } satisfies ProductRefundState
+        }))
+        for (const item of batch) if (item.status === 'fulfilled') states.push(item.value)
+      }
+      return states
     },
     verifyPurchaseCreation: async input => {
       const expected = input.chainId === 5042002 ? testnetPurchase : process.env.JANUS_PURCHASE_ADDRESS?.trim().toLowerCase()

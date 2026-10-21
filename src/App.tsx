@@ -17,7 +17,12 @@ import SharedPurchase from './components/SharedPurchase'
 import { janusApi } from './lib/api'
 import type { Hash } from 'viem'
 
-type InboxCountData = { splits: unknown[]; groups: unknown[]; purchases: { read_at: string | null }[] }
+type InboxCountData = {
+  splits: unknown[]
+  groups: unknown[]
+  purchases: { purchase: { id: string }; read_at: string | null }[]
+  notifications: { kind: string; resource_id: string | null; read_at: string | null }[]
+}
 
 export default function App() {
   const { address } = useAccount()
@@ -85,6 +90,13 @@ function AccountApp() {
     </main>
   </div>
 
+  const unreadRefunds = (inbox.data?.notifications ?? []).filter(item =>
+    item.kind.startsWith('purchase_refund_') && !item.read_at)
+  const refundPurchaseIds = new Set(unreadRefunds.map(item => item.resource_id).filter(Boolean))
+  const inboxCount = (inbox.data?.splits.length ?? 0) + (inbox.data?.groups.length ?? 0) +
+    (inbox.data?.purchases.filter(item => !item.read_at && !refundPurchaseIds.has(item.purchase.id)).length ?? 0) +
+    unreadRefunds.length
+
   return (
     <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>
       <Header minimal={screen === 'home'} onHome={() => setScreen('home')} onOpenAccount={() => setScreen('settings')} />
@@ -98,7 +110,7 @@ function AccountApp() {
           {screen === 'settings' && <SettingsScreen />}
         </div>
       </main>
-      {screen !== 'home' && <BottomNav active={screen} onChange={setScreen} inboxCount={(inbox.data?.splits.length ?? 0) + (inbox.data?.groups.length ?? 0) + (inbox.data?.purchases.filter(item => !item.read_at).length ?? 0)} />}
+      {screen !== 'home' && <BottomNav active={screen} onChange={setScreen} inboxCount={inboxCount} />}
     </div>
   )
 }

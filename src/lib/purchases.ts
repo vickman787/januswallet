@@ -50,6 +50,11 @@ export function parsePurchaseDraft(recipientInput: string, amountInput: string, 
   return { recipient, amount, fundingDeadline, releaseDeadline }
 }
 
+export function purchaseRefundNotice(status: number, contributions: { amount: bigint; claimed: boolean }[]) {
+  if (status !== 3 && status !== 4) return null
+  if (!contributions.some(item => item.amount > 0n && !item.claimed)) return null
+  return status === 3 ? 'cancelled' as const : 'expired' as const
+}
 export function purchaseActionAvailability(purchase: PurchaseSnapshot, wallet: Address, contribution: bigint, claimed: boolean, nowSeconds = Math.floor(Date.now() / 1000)) {
   const organizer = wallet.toLowerCase() === purchase.organizer.toLowerCase()
   return {

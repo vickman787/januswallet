@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { clearPendingPurchase, parsePurchaseDraft, parsePurchaseId, purchaseActionAvailability, readPendingPurchase, savePendingPurchase, type PendingPurchaseTx, type PurchaseSnapshot } from '../src/lib/purchases'
+import { clearPendingPurchase, parsePurchaseDraft, parsePurchaseId, purchaseActionAvailability, purchaseRefundNotice, readPendingPurchase, savePendingPurchase, type PendingPurchaseTx, type PurchaseSnapshot } from '../src/lib/purchases'
 import type { Address, Hash } from 'viem'
 
 const organizer = '0x1111111111111111111111111111111111111111' as Address
@@ -66,4 +66,13 @@ test('expiry and refunds follow on-chain state boundaries', () => {
   assert.equal(purchaseActionAvailability({ ...purchase, status: 3 }, contributor, 5n, false, now).refund, true)
   assert.equal(purchaseActionAvailability({ ...purchase, status: 4 }, contributor, 5n, true, now).refund, false)
   assert.equal(purchaseActionAvailability({ ...purchase, status: 2 }, contributor, 5n, false, now).refund, false)
+})
+test('refund inbox notice requires a cancelled or expired unclaimed contribution', () => {
+  const paid = [{ amount: 200_000n, claimed: false }]
+  assert.equal(purchaseRefundNotice(3, paid), 'cancelled')
+  assert.equal(purchaseRefundNotice(4, paid), 'expired')
+  assert.equal(purchaseRefundNotice(2, paid), null)
+  assert.equal(purchaseRefundNotice(3, [{ amount: 0n, claimed: false }]), null)
+  assert.equal(purchaseRefundNotice(4, [{ amount: 200_000n, claimed: true }]), null)
+  assert.equal(purchaseRefundNotice(3, [{ amount: 1n, claimed: true }, { amount: 2n, claimed: false }]), 'cancelled')
 })

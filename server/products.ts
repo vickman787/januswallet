@@ -30,6 +30,17 @@ export type ProductNotification = {
   id: string; recipient_id: string; event_key: string; kind: string
   resource_id: string | null; read_at: string | null; created_at: string
 }
+export type ProductRefundState = { purchaseId: string; reason: 'cancelled' | 'expired' | null }
+
+export function purchaseRefundNotificationPlan(states: ProductRefundState[], existing: ProductNotification[]) {
+  const desired = new Map(states.map(item => [item.purchaseId, item.reason]))
+  const stale = existing.filter(item => !desired.get(item.resource_id ?? '') ||
+    item.kind !== 'purchase_refund_' + desired.get(item.resource_id ?? ''))
+  const staleIds = new Set(stale.map(item => item.id))
+  const current = new Set(existing.filter(item => !staleIds.has(item.id)).map(item => item.resource_id))
+  const missing = states.filter(item => item.reason && !current.has(item.purchaseId))
+  return { stale, missing }
+}
 
 type JsonRow = Record<string, unknown>
 function rows(value: unknown): JsonRow[] {
@@ -127,6 +138,7 @@ export interface ProductStore {
   inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; purchases: ProductPurchaseInvitation[] }>
   markNotification(id: string, profileId: string): Promise<boolean>
   markPurchaseRead(purchaseId: string, profileId: string): Promise<boolean>
+  syncPurchaseRefundNotifications(profileId: string, states: ProductRefundState[]): Promise<ProductNotification[]>
   savePurchase(ownerId: string, input: { chainId: number; contract: string; onchainId: string; groupId: string | null; title: string; description: string; txHash: string }, participants: ProductProfile[]): Promise<ProductPurchase>
 }
 
@@ -360,6 +372,23 @@ export function createProductStore(url: string, key: string): ProductStore {
     },    async markNotification(id, profileId) {
       const result = rows(await request('notifications?id=eq.' + encodeURIComponent(id) + '&recipient_id=eq.' + encodeURIComponent(profileId) + '&read_at=is.null&select=id', 'PATCH', { read_at: new Date().toISOString() }, 'return=representation'))
       return result.length === 1
+    },
+    async syncPurchaseRefundNotifications(profileId, states) {
+      const purchaseIds = [...new Set(states.map(item => item.purchaseId))]
+      if (purchaseIds.length) {
+        const existing = rows(await request('notifications?recipient_id=eq.' + encodeURIComponent(profileId) +
+          '&resource_id=in.(' + purchaseIds.join(',') + ')&select=*')).map(notification)
+          .filter(item => item.kind === 'purchase_refund_cancelled' || item.kind === 'purchase_refund_expired')
+        const { stale, missing } = purchaseRefundNotificationPlan(states, existing)
+        if (stale.length) await request('notifications?id=in.(' + stale.map(item => item.id).join(',') + ')', 'DELETE')
+        if (missing.length) await request('notifications?on_conflict=recipient_id,event_key', 'POST', missing.map(item => ({
+          recipient_id: profileId,
+          event_key: 'purchase-refund:' + item.purchaseId,
+          kind: 'purchase_refund_' + item.reason,
+          resource_id: item.purchaseId,
+        })), 'resolution=ignore-duplicates')
+      }
+      return rows(await request('notifications?recipient_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc&limit=100')).map(notification)
     },
     async savePurchase(ownerId, input, participants) {
       const existing = await one('purchases?chain_id=eq.' + input.chainId + '&contract_address=eq.' + encodeURIComponent(input.contract.toLowerCase()) + '&onchain_id=eq.' + encodeURIComponent(input.onchainId.toLowerCase()) + '&select=*')

@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
 import { ApiError, profileInput, walletAddress, type Store } from './core.js'
-import type { ProductProfile, ProductStore } from './products.js'
+import type { ProductProfile, ProductPurchase, ProductRefundState, ProductStore } from './products.js'
 
 type Dependencies = {
   origin: string
@@ -16,6 +16,7 @@ type Dependencies = {
     chainId: number; contract: Address; hash: Hash; purchaseId: Hash; organizer: Address
     recipient: Address; target: bigint; fundingDeadline: number; releaseDeadline: number
   }) => Promise<boolean>
+  purchaseRefundStates?: (purchases: ProductPurchase[], wallets: Address[]) => Promise<ProductRefundState[]>
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -164,7 +165,15 @@ export function createHandler(deps: Dependencies) {
 
       if (path === '/api/inbox' && req.method === 'GET') {
         if (!deps.products) throw new ApiError(503, 'Inbox service is not configured.')
-        return reply(200, await deps.products.inbox(profile.id))
+        const result = await deps.products.inbox(profile.id)
+        if (deps.purchaseRefundStates && result.purchases.length) {
+          try {
+            const wallets = (await deps.store.wallets(profile.id)).map(item => walletAddress(item.address))
+            const states = await deps.purchaseRefundStates(result.purchases.map(item => item.purchase), wallets)
+            result.notifications = await deps.products.syncPurchaseRefundNotifications(profile.id, states)
+          } catch { /* Keep the stored inbox available when Arc reconciliation is temporarily unavailable. */ }
+        }
+        return reply(200, result)
       }
 
       if (path === '/api/purchases' && req.method === 'POST') {
@@ -213,6 +222,12 @@ export function createHandler(deps: Dependencies) {
       if (req.method === 'POST' && purchaseRead) {
         if (!deps.products || !uuid.test(purchaseRead[1])) throw new ApiError(404, 'Purchase invitation not found.')
         await deps.products.markPurchaseRead(purchaseRead[1], profile.id)
+        return reply(200, { read: true })
+      }
+      const notificationRead = /^\/api\/notifications\/([0-9a-f-]{36})\/read$/.exec(path)
+      if (req.method === 'POST' && notificationRead) {
+        if (!deps.products || !uuid.test(notificationRead[1])) throw new ApiError(404, 'Notification not found.')
+        await deps.products.markNotification(notificationRead[1], profile.id)
         return reply(200, { read: true })
       }
       if (path === '/api/groups' && req.method === 'GET') {
