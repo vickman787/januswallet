@@ -90,12 +90,12 @@ function AccountApp() {
     </main>
   </div>
 
-  const unreadRefunds = (inbox.data?.notifications ?? []).filter(item =>
-    item.kind.startsWith('purchase_refund_') && !item.read_at)
-  const refundPurchaseIds = new Set(unreadRefunds.map(item => item.resource_id).filter(Boolean))
+  const purchaseNotices = (inbox.data?.notifications ?? []).filter(item => item.kind.startsWith('purchase_'))
+  const unreadPurchaseNotices = purchaseNotices.filter(item => !item.read_at)
+  const noticePurchaseIds = new Set(purchaseNotices.map(item => item.resource_id).filter(Boolean))
   const inboxCount = (inbox.data?.splits.length ?? 0) + (inbox.data?.groups.length ?? 0) +
-    (inbox.data?.purchases.filter(item => !item.read_at && !refundPurchaseIds.has(item.purchase.id)).length ?? 0) +
-    unreadRefunds.length
+    (inbox.data?.purchases.filter(item => !item.read_at && !noticePurchaseIds.has(item.purchase.id)).length ?? 0) +
+    unreadPurchaseNotices.length
 
   return (
     <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>

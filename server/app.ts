@@ -1,10 +1,9 @@
 import { createPublicClient, http, parseEventLogs, type Address, type Hash } from 'viem'
 import { arc, arcTestnet } from 'viem/chains'
 import { hasExpectedTransfer } from '../src/lib/payments.js'
-import { purchaseRefundNotice } from '../src/lib/purchases.js'
 import { createTokenVerifier, createStore } from './core.js'
 import { createHandler } from './handler.js'
-import { createProductStore, type ProductRefundState } from './products.js'
+import { createProductStore, purchaseNoticeKind, type ProductPurchaseNoticeState } from './products.js'
 
 const arcUsdc = '0x3600000000000000000000000000000000000000' as const
 const testnetPurchase = '0xbcae6c22c0c3c2509f920613a4900065bfe00442'
@@ -66,9 +65,8 @@ export function createJanusHandler() {
       const receipt = await client.getTransactionReceipt({ hash })
       return receipt.status === 'success' && hasExpectedTransfer(receipt.logs, arcUsdc, from, to, amount)
     },
-    purchaseRefundStates: async (purchases, wallets) => {
-      if (!wallets.length) return []
-      const states: ProductRefundState[] = []
+    purchaseNoticeStates: async (purchases, wallets, profileId) => {
+      const states: ProductPurchaseNoticeState[] = []
       for (let offset = 0; offset < purchases.length; offset += 6) {
         const batch = await Promise.allSettled(purchases.slice(offset, offset + 6).map(async purchase => {
           const expected = purchase.chain_id === 5042002 ? testnetPurchase : process.env.JANUS_PURCHASE_ADDRESS?.trim().toLowerCase()
@@ -80,18 +78,40 @@ export function createJanusHandler() {
             address: contract, abi: purchaseStateAbi, functionName: 'getPurchase', args: [purchaseId],
           })
           const status = Number(current[7])
-          if (status !== 3 && status !== 4) return { purchaseId: purchase.id, reason: null } satisfies ProductRefundState
-          const contributions = await Promise.all(wallets.map(async wallet => {
-            const [amount, claimed] = await Promise.all([
-              purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'contributionOf', args: [purchaseId, wallet] }),
-              purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'isRefundClaimed', args: [purchaseId, wallet] }),
-            ])
-            return { amount: BigInt(amount), claimed }
-          }))
+          const role = purchase.organizer_id === profileId ? 'organizer' : 'participant'
+          let contribution = 0n
+          let refundClaimed = false
+          if (role === 'participant' && wallets.length) {
+            if (status === 3 || status === 4) {
+              const contributions = await Promise.all(wallets.map(async wallet => {
+                const [amount, claimed] = await Promise.all([
+                  purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'contributionOf', args: [purchaseId, wallet] }),
+                  purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'isRefundClaimed', args: [purchaseId, wallet] }),
+                ])
+                return { amount: BigInt(amount), claimed }
+              }))
+              contribution = contributions.reduce((sum, item) => sum + (item.claimed ? 0n : item.amount), 0n)
+              refundClaimed = contribution === 0n && contributions.some(item => item.amount > 0n)
+            } else if (status === 0) {
+              const amounts = await Promise.all(wallets.map(wallet =>
+                purchaseClient.readContract({ address: contract, abi: purchaseStateAbi, functionName: 'contributionOf', args: [purchaseId, wallet] })))
+              contribution = amounts.reduce((sum, amount) => sum + BigInt(amount), 0n)
+            }
+          }
           return {
             purchaseId: purchase.id,
-            reason: purchaseRefundNotice(status, contributions),
-          } satisfies ProductRefundState
+            kind: purchaseNoticeKind({
+              role,
+              status,
+              target: BigInt(current[3]),
+              funded: BigInt(current[4]),
+              fundingDeadline: Number(current[5]),
+              releaseDeadline: Number(current[6]),
+              contribution,
+              refundClaimed,
+              now: Math.floor(Date.now() / 1000),
+            }),
+          } satisfies ProductPurchaseNoticeState
         }))
         for (const item of batch) if (item.status === 'fulfilled') states.push(item.value)
       }

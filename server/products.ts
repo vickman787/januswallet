@@ -30,16 +30,57 @@ export type ProductNotification = {
   id: string; recipient_id: string; event_key: string; kind: string
   resource_id: string | null; read_at: string | null; created_at: string
 }
-export type ProductRefundState = { purchaseId: string; reason: 'cancelled' | 'expired' | null }
+export type ProductPurchaseNoticeKind =
+  | 'purchase_refund_cancelled'
+  | 'purchase_refund_expired'
+  | 'purchase_funding_24h'
+  | 'purchase_funding_1h'
+  | 'purchase_fully_funded'
+  | 'purchase_release_24h'
+  | 'purchase_release_1h'
+export type ProductPurchaseNoticeState = { purchaseId: string; kind: ProductPurchaseNoticeKind | null }
 
-export function purchaseRefundNotificationPlan(states: ProductRefundState[], existing: ProductNotification[]) {
-  const desired = new Map(states.map(item => [item.purchaseId, item.reason]))
+export function purchaseNotificationPlan(states: ProductPurchaseNoticeState[], existing: ProductNotification[]) {
+  const desired = new Map(states.map(item => [item.purchaseId, item.kind]))
   const stale = existing.filter(item => !desired.get(item.resource_id ?? '') ||
-    item.kind !== 'purchase_refund_' + desired.get(item.resource_id ?? ''))
+    item.kind !== desired.get(item.resource_id ?? ''))
   const staleIds = new Set(stale.map(item => item.id))
   const current = new Set(existing.filter(item => !staleIds.has(item.id)).map(item => item.resource_id))
-  const missing = states.filter(item => item.reason && !current.has(item.purchaseId))
+  const missing = states.filter(item => item.kind && !current.has(item.purchaseId))
   return { stale, missing }
+}
+
+export function purchaseNoticeKind(input: {
+  role: 'organizer' | 'participant'
+  status: number
+  target: bigint
+  funded: bigint
+  fundingDeadline: number
+  releaseDeadline: number
+  contribution: bigint
+  refundClaimed: boolean
+  now: number
+}): ProductPurchaseNoticeKind | null {
+  if (input.role === 'participant' && (input.status === 3 || input.status === 4) &&
+      input.contribution > 0n && !input.refundClaimed) {
+    return input.status === 3 ? 'purchase_refund_cancelled' : 'purchase_refund_expired'
+  }
+  if (input.role === 'participant' && input.status === 0 && input.funded < input.target &&
+      input.contribution === 0n) {
+    const remaining = input.fundingDeadline - input.now
+    if (remaining <= 0) return null
+    if (remaining <= 60 * 60) return 'purchase_funding_1h'
+    if (remaining <= 24 * 60 * 60) return 'purchase_funding_24h'
+    return null
+  }
+  if (input.role === 'organizer' && input.status === 1) {
+    const remaining = input.releaseDeadline - input.now
+    if (remaining <= 0) return null
+    if (remaining <= 60 * 60) return 'purchase_release_1h'
+    if (remaining <= 24 * 60 * 60) return 'purchase_release_24h'
+    return 'purchase_fully_funded'
+  }
+  return null
 }
 
 type JsonRow = Record<string, unknown>
@@ -135,10 +176,10 @@ export interface ProductStore {
   splitsFor(profileId: string): Promise<ProductSplit[]>
   claimShare(splitId: string, index: number, profileId: string, wallet: string): Promise<ProductShare | null>
   confirmShare(splitId: string, index: number, profileId: string, wallet: string, hash: string): Promise<boolean>
-  inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; purchases: ProductPurchaseInvitation[] }>
+  inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; purchases: ProductPurchaseInvitation[]; notificationPurchases: ProductPurchase[] }>
   markNotification(id: string, profileId: string): Promise<boolean>
   markPurchaseRead(purchaseId: string, profileId: string): Promise<boolean>
-  syncPurchaseRefundNotifications(profileId: string, states: ProductRefundState[]): Promise<ProductNotification[]>
+  syncPurchaseNotifications(profileId: string, states: ProductPurchaseNoticeState[]): Promise<ProductNotification[]>
   savePurchase(ownerId: string, input: { chainId: number; contract: string; onchainId: string; groupId: string | null; title: string; description: string; txHash: string }, participants: ProductProfile[]): Promise<ProductPurchase>
 }
 
@@ -318,12 +359,13 @@ export function createProductStore(url: string, key: string): ProductStore {
       return result.length === 1
     },
     async inbox(profileId) {
-      const [requestsData, membershipsData, notificationsData, participantData, purchaseParticipantData] = await Promise.all([
+      const [requestsData, membershipsData, notificationsData, participantData, purchaseParticipantData, organizedPurchaseData] = await Promise.all([
         request('payment_requests?payer_id=eq.' + encodeURIComponent(profileId) + '&status=eq.unpaid&select=*&order=created_at.desc'),
         request('group_members?profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=*'),
         request('notifications?recipient_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc&limit=100'),
         request('split_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&status=in.(unclaimed,reserved,pending)&select=*&order=split_id.asc,share_index.asc'),
         request('purchase_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=*&order=created_at.desc'),
+        request('purchases?organizer_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc'),
       ])
       const invitedMemberships = rows(membershipsData).map(membership)
       const groupIds = [...new Set(invitedMemberships.map(item => item.group_id))]
@@ -355,6 +397,10 @@ export function createProductStore(url: string, key: string): ProductStore {
         const parent = purchaseById.get(text(item, 'purchase_id'))
         return parent ? [{ purchase: parent, status: text(item, 'status'), read_at: optionalText(item, 'read_at'), created_at: text(item, 'created_at') }] : []
       })
+      const notificationPurchases = [...new Map([
+        ...purchaseRecords,
+        ...rows(organizedPurchaseData).map(purchase),
+      ].map(item => [item.id, item])).values()]
       return {
         requests: rows(requestsData).map(paymentRequest),
         memberships: invitedMemberships,
@@ -362,6 +408,7 @@ export function createProductStore(url: string, key: string): ProductStore {
         splits,
         groups,
         purchases,
+        notificationPurchases,
       }
     },
     async markPurchaseRead(purchaseId, profileId) {
@@ -373,18 +420,18 @@ export function createProductStore(url: string, key: string): ProductStore {
       const result = rows(await request('notifications?id=eq.' + encodeURIComponent(id) + '&recipient_id=eq.' + encodeURIComponent(profileId) + '&read_at=is.null&select=id', 'PATCH', { read_at: new Date().toISOString() }, 'return=representation'))
       return result.length === 1
     },
-    async syncPurchaseRefundNotifications(profileId, states) {
+    async syncPurchaseNotifications(profileId, states) {
       const purchaseIds = [...new Set(states.map(item => item.purchaseId))]
       if (purchaseIds.length) {
         const existing = rows(await request('notifications?recipient_id=eq.' + encodeURIComponent(profileId) +
           '&resource_id=in.(' + purchaseIds.join(',') + ')&select=*')).map(notification)
-          .filter(item => item.kind === 'purchase_refund_cancelled' || item.kind === 'purchase_refund_expired')
-        const { stale, missing } = purchaseRefundNotificationPlan(states, existing)
+          .filter(item => item.kind.startsWith('purchase_'))
+        const { stale, missing } = purchaseNotificationPlan(states, existing)
         if (stale.length) await request('notifications?id=in.(' + stale.map(item => item.id).join(',') + ')', 'DELETE')
         if (missing.length) await request('notifications?on_conflict=recipient_id,event_key', 'POST', missing.map(item => ({
           recipient_id: profileId,
-          event_key: 'purchase-refund:' + item.purchaseId,
-          kind: 'purchase_refund_' + item.reason,
+          event_key: 'purchase-action:' + item.purchaseId,
+          kind: item.kind,
           resource_id: item.purchaseId,
         })), 'resolution=ignore-duplicates')
       }

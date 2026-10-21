@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
 import { ApiError, profileInput, walletAddress, type Store } from './core.js'
-import type { ProductProfile, ProductPurchase, ProductRefundState, ProductStore } from './products.js'
+import type { ProductProfile, ProductPurchase, ProductPurchaseNoticeState, ProductStore } from './products.js'
 
 type Dependencies = {
   origin: string
@@ -16,7 +16,7 @@ type Dependencies = {
     chainId: number; contract: Address; hash: Hash; purchaseId: Hash; organizer: Address
     recipient: Address; target: bigint; fundingDeadline: number; releaseDeadline: number
   }) => Promise<boolean>
-  purchaseRefundStates?: (purchases: ProductPurchase[], wallets: Address[]) => Promise<ProductRefundState[]>
+  purchaseNoticeStates?: (purchases: ProductPurchase[], wallets: Address[], profileId: string) => Promise<ProductPurchaseNoticeState[]>
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -166,11 +166,11 @@ export function createHandler(deps: Dependencies) {
       if (path === '/api/inbox' && req.method === 'GET') {
         if (!deps.products) throw new ApiError(503, 'Inbox service is not configured.')
         const result = await deps.products.inbox(profile.id)
-        if (deps.purchaseRefundStates && result.purchases.length) {
+        if (deps.purchaseNoticeStates && result.notificationPurchases.length) {
           try {
             const wallets = (await deps.store.wallets(profile.id)).map(item => walletAddress(item.address))
-            const states = await deps.purchaseRefundStates(result.purchases.map(item => item.purchase), wallets)
-            result.notifications = await deps.products.syncPurchaseRefundNotifications(profile.id, states)
+            const states = await deps.purchaseNoticeStates(result.notificationPurchases, wallets, profile.id)
+            result.notifications = await deps.products.syncPurchaseNotifications(profile.id, states)
           } catch { /* Keep the stored inbox available when Arc reconciliation is temporarily unavailable. */ }
         }
         return reply(200, result)
