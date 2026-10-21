@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { createJanusHandler } from './app'
+import { createJanusHandler } from './app.js'
 
 const handler = createJanusHandler()
 const server = createServer((req, res) => { void handler(req, res) })

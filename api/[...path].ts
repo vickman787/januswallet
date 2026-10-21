@@ -1,3 +1,3 @@
-import { createJanusHandler } from '../server/app'
+import { createJanusHandler } from '../server/app.js'
 
 export default createJanusHandler()

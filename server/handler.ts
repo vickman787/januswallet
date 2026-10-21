@@ -2,8 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
-import { ApiError, profileInput, walletAddress, type Store } from './core'
-import type { ProductProfile, ProductStore } from './products'
+import { ApiError, profileInput, walletAddress, type Store } from './core.js'
+import type { ProductProfile, ProductStore } from './products.js'
 
 type Dependencies = {
   origin: string

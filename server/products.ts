@@ -1,4 +1,4 @@
-import { ApiError } from './core'
+import { ApiError } from './core.js'
 
 export type ProductProfile = { id: string; username: string; display_name: string }
 export type ProductRequest = {
