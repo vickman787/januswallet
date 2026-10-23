@@ -1,6 +1,6 @@
 import { Wallet, ArrowLeftRight, Inbox, Users, Settings } from 'lucide-react'
 
-export type Screen = 'home' | 'wallet' | 'activity' | 'inbox' | 'groups' | 'settings'
+export type Screen = 'home' | 'wallet' | 'activity' | 'inbox' | 'groups' | 'settings' | 'docs'
 
 interface BottomNavProps {
   active: Screen

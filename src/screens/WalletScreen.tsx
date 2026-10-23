@@ -1,7 +1,7 @@
 import { useAccount, useReadContract } from 'wagmi'
 import { erc20Abi, type Address } from 'viem'
 import { useState } from 'react'
-import { ArrowUpRight, ArrowDownLeft, SplitSquareVertical, ShoppingBag, RefreshCw } from 'lucide-react'
+import { ArrowUpRight, ArrowDownLeft, SplitSquareVertical, ShoppingBag, RefreshCw, BookOpen, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { Amount } from '../onchain-money'
 import { ARC_MAINNET_ID, ARC_TESTNET_ID } from '../contracts'
@@ -14,8 +14,9 @@ import SplitPlanner from '../components/SplitPlanner'
 import SharedPurchase from '../components/SharedPurchase'
 import CreateWalletActions from '../components/CreateWalletActions'
 
-export default function WalletScreen({ onViewActivity, purchaseNetwork = 'mainnet', initialPurchaseOpen = false }: {
+export default function WalletScreen({ onViewActivity, onOpenDocs, purchaseNetwork = 'mainnet', initialPurchaseOpen = false }: {
   onViewActivity: () => void
+  onOpenDocs: () => void
   purchaseNetwork?: 'mainnet' | 'testnet'
   initialPurchaseOpen?: boolean
 }) {
@@ -72,6 +73,11 @@ export default function WalletScreen({ onViewActivity, purchaseNetwork = 'mainne
           </button>
         ))}
       </div>
+      <button type="button" onClick={onOpenDocs} className="janus-panel flex w-full min-h-[76px] items-center gap-4 p-4 text-left transition-colors hover:bg-white/[0.08]" aria-label="Open Docs: Split vs Purchase and more guides">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#4D6BFF]/30 bg-[#4D6BFF]/10 text-[#9BAEFF]"><BookOpen size={22} /></span>
+        <span className="min-w-0 flex-1"><span className="block font-semibold">Docs</span><span className="mt-0.5 block text-xs leading-relaxed text-[#A8B0BE]">Split vs Purchase and more guides</span></span>
+        <ChevronRight size={20} className="shrink-0 text-[#9BAEFF]" />
+      </button>
       <section>
         <div className="mb-3 flex items-center justify-between gap-3"><h2 className="display font-semibold">Recent activity</h2><button className="text-sm font-medium text-[#9BAEFF] min-h-11 px-2" onClick={onViewActivity}>View all</button></div>
         <TransferActivity compact />
@@ -86,8 +92,8 @@ export default function WalletScreen({ onViewActivity, purchaseNetwork = 'mainne
         <div className="flex gap-3 mt-5"><button className="janus-secondary flex-1" onClick={() => setModal(null)}>Close</button>
           <button className="janus-primary flex-1" onClick={() => { void copyAddress() }}>Copy address</button></div>
       </Dialog>}
-      {modal === 'split' && <SplitPlanner onClose={() => setModal(null)} />}
-      {modal === 'purchase' && <SharedPurchase network={purchaseNetwork} onClose={() => setModal(null)} />}
+      {modal === 'split' && <SplitPlanner onClose={() => setModal(null)} onOpenDocs={() => { setModal(null); onOpenDocs() }} />}
+      {modal === 'purchase' && <SharedPurchase network={purchaseNetwork} onClose={() => setModal(null)} onOpenDocs={() => { setModal(null); onOpenDocs() }} />}
     </div>
   )
 }

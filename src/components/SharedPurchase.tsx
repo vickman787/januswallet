@@ -48,7 +48,7 @@ function snapshot(value: unknown): PurchaseSnapshot {
     fundingDeadline: Number(fundingDeadline), releaseDeadline: Number(releaseDeadline), status: Number(status) }
 }
 
-export default function SharedPurchase({ onClose, network = 'mainnet', initialPurchaseId }: { onClose: () => void; network?: 'mainnet' | 'testnet'; initialPurchaseId?: Hash }) {
+export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet', initialPurchaseId }: { onClose: () => void; onOpenDocs?: () => void; network?: 'mainnet' | 'testnet'; initialPurchaseId?: Hash }) {
   const { address, chainId: connectedChainId } = useAccount()
   const auth = useJanusAuth()
   const queries = useQueryClient()
@@ -291,6 +291,7 @@ export default function SharedPurchase({ onClose, network = 'mainnet', initialPu
   const locked = busy || !!pending
   return <Dialog label="Shared purchases" onClose={onClose} busy={busy}>
     <h2 className="display text-xl font-semibold mb-2">Shared purchases</h2>
+    {onOpenDocs && <button type="button" onClick={onOpenDocs} className="min-h-10 text-sm font-medium text-[#9BAEFF] underline">Split or Purchase? Read Docs</button>}
     {!contract ? <p className="text-sm text-[#A8B0BE]">Purchases open after the reviewed JanusPurchase deployment is configured. No funds can be collected here yet.</p> : <div className="space-y-5 text-sm">
       <p className="text-[#A8B0BE]">Escrow uses {networkName} USDC. The organizer controls release after full funding, before the release deadline. Contributors claim their own refunds after cancellation or expiry.</p>
       <div role="tablist" aria-label="Shared purchase workflow" className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-black/20 p-1">

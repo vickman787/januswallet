@@ -12,7 +12,7 @@ import Dialog from './Dialog'
 type SplitResult = { share: bigint; recipient?: ResolvedRecipient; input?: string }
 type CreatedSplit = { split: { id: string; title: string }; shares: { share_index: number }[] }
 
-export default function SplitPlanner({ onClose }: { onClose: () => void }) {
+export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => void; onOpenDocs?: () => void }) {
   const auth = useJanusAuth()
   const { address } = useAccount()
   const [kind, setKind] = useState<'named' | 'open'>('named')
@@ -141,7 +141,8 @@ export default function SplitPlanner({ onClose }: { onClose: () => void }) {
 
   return <Dialog label="Create a split" onClose={onClose} busy={busy}>
     <h2 className="display text-xl font-semibold mb-3">Create a split</h2>
-    <p className="text-sm text-[#A8B0BE] mb-5">A verified JANUS username has the same payment function as its verified wallet address.</p>
+    <p className="text-sm text-[#A8B0BE] mb-2">A verified JANUS username has the same payment function as its verified wallet address.</p>
+    {onOpenDocs && <button type="button" onClick={onOpenDocs} className="mb-5 min-h-10 text-sm font-medium text-[#9BAEFF] underline">Split or Purchase? Read Docs</button>}
     <form className="space-y-4" onSubmit={event => { event.preventDefault(); void calculate() }}>
       <fieldset className="grid grid-cols-2 gap-2">
         <legend className="field-label mb-2">Split type</legend>

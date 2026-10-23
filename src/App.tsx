@@ -10,6 +10,7 @@ import ActivityScreen from './screens/ActivityScreen'
 import InboxScreen from './screens/InboxScreen'
 import GroupsScreen from './screens/GroupsScreen'
 import SettingsScreen from './screens/SettingsScreen'
+import DocsScreen from './screens/DocsScreen'
 import SplitPaymentScreen from './screens/SplitPaymentScreen'
 import AppLoadingScreen from './components/AppLoadingScreen'
 import ContractDeploymentScreen from './screens/ContractDeploymentScreen'
@@ -103,11 +104,12 @@ function AccountApp() {
       <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px', paddingBottom: screen === 'home' ? 0 : 'calc(104px + env(safe-area-inset-bottom))' }}>
         <div className={screen === 'home' ? 'max-w-3xl mx-auto w-full' : 'max-w-md mx-auto w-full'}>
           {screen === 'home' && <LandingScreen inApp onOpenWallet={() => setScreen('wallet')} />}
-          {screen === 'wallet' && <WalletScreen onViewActivity={() => setScreen('activity')} purchaseNetwork={purchaseTest ? 'testnet' : 'mainnet'} initialPurchaseOpen={purchaseTest} />}
+          {screen === 'wallet' && <WalletScreen onViewActivity={() => setScreen('activity')} onOpenDocs={() => setScreen('docs')} purchaseNetwork={purchaseTest ? 'testnet' : 'mainnet'} initialPurchaseOpen={purchaseTest} />}
           {screen === 'activity' && <ActivityScreen />}
           {screen === 'inbox' && <InboxScreen />}
           {screen === 'groups' && <GroupsScreen />}
           {screen === 'settings' && <SettingsScreen />}
+          {screen === 'docs' && <DocsScreen onBack={() => setScreen('wallet')} />}
         </div>
       </main>
       {screen !== 'home' && <BottomNav active={screen} onChange={setScreen} inboxCount={inboxCount} />}
