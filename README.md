@@ -4,6 +4,37 @@ JANUS Wallet helps people send and receive USDC on Arc Mainnet, split bills, and
 
 **Try it:** [januswallet.xyz](https://januswallet.xyz) · [Watch the demo](https://youtu.be/dBig33jqzKc)
 
+## At a glance
+
+| | JANUS Wallet |
+| --- | --- |
+| Network | Arc Mainnet (chain ID `5042`) |
+| Everyday payments | Direct USDC transfers to a wallet address or verified JANUS username |
+| Split bills | Named or open exact shares, paid directly to the saved recipient |
+| Shared purchases | Flexible contributions held by JanusPurchase until organizer release or contributor-claimed refund |
+| Coordination | Verified usernames, groups, invitations, Inbox updates, and activity |
+| Live app | [januswallet.xyz](https://januswallet.xyz) |
+
+## Product tour
+
+These are **illustrative frames from the [JANUS Wallet walkthrough](https://youtu.be/dBig33jqzKc)**. The names, balances, and amounts shown are examples; use the live app and Arc explorer for current state.
+
+**Wallet.** See the Arc USDC balance, your payment actions, and recent activity in one place.
+
+<img src="docs/tour/wallet.png" alt="Illustrative JANUS Wallet view with balance and Send, Receive, Split, and Purchase actions" width="620">
+
+**Send.** Enter a verified JANUS username or wallet address, review the resolved recipient, then confirm the direct USDC transfer in your wallet.
+
+<img src="docs/tour/send.png" alt="Illustrative Send USDC form showing username and amount fields" width="620">
+
+**Split.** Set a bill total and recipient, assign exact shares to people or create open shares, and let each payer send directly to that recipient.
+
+<img src="docs/tour/split.png" alt="Illustrative split bill view with three equal participant shares" width="620">
+
+**Purchase.** Invite participants to fund a target in escrow. When it is fully funded, the organizer can release to the recipient before the deadline. Eligible cancellation or expiry lets contributors claim their own refunds.
+
+<img src="docs/tour/purchase.png" alt="Illustrative funded shared purchase view with target, recipient, and release action" width="620">
+
 ## How the wallet works
 
 1. Sign in with email, Google, or a wallet. Create a JANUS wallet through Privy or connect an existing Ethereum-compatible wallet. If more than one wallet is connected, choose the active payment wallet in Settings.
@@ -32,6 +63,27 @@ If the organizer cancels, or an underfunded or unreleased purchase becomes eligi
 ## Groups and usernames
 
 Groups let an organizer invite verified JANUS accounts and reuse accepted members when creating a split or purchase. Members can accept or decline invitations; accepted members can leave, and the organizer can add or remove members. Editing a group does not change an existing payment or on-chain purchase. Username lookup and invitations depend on the JANUS API being available; the payment wallet and escrow transactions are on Arc.
+
+## Architecture
+
+JANUS separates social coordination from money movement. The API stores profiles, verified username-to-wallet links, groups, split assignments, invitations, and notifications. The active wallet signs payments; Arc Mainnet records direct USDC transfers and the shared-purchase escrow state.
+
+```mermaid
+flowchart LR
+    U["User"] --> WEB["JANUS web app<br/>React + Vite"]
+    WEB --> AUTH["Privy sign-in<br/>active payment wallet"]
+    WEB --> API["JANUS API"]
+    API --> DB[("Supabase<br/>profiles · groups · splits · inbox")]
+    WEB --> READ["wagmi + viem<br/>chain reads"]
+    READ --> ARC["Arc Mainnet"]
+    AUTH --> SIGN["Wallet confirmation"]
+    SIGN --> DIRECT["Direct USDC transfers<br/>Send + Split"]
+    SIGN --> ESCROW["JanusPurchase escrow<br/>contribute · release · refund"]
+    DIRECT --> ARC
+    ESCROW --> ARC
+```
+
+A Split payment reaches the saved recipient directly. A Purchase contribution stays in the escrow contract until an eligible release or contributor refund; the JANUS API does not hold those funds.
 
 ## Mainnet contracts
 
