@@ -8,12 +8,14 @@ import { parseUsdcInput } from '../lib/payments'
 import { resolveRecipientInput } from '../lib/recipients'
 import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
+import { useWalletIdentity } from '../hooks/useWalletIdentity'
 import { mergeGroupParticipants, participantInputs, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../lib/groups'
 import {
   clearPendingPurchase, parsePurchaseDraft, parsePurchaseId, purchaseActionAvailability,
   readPendingPurchase, savePendingPurchase, type PendingPurchaseTx, type PurchaseInviteMetadata, type PurchaseSnapshot,
 } from '../lib/purchases'
 import Dialog from './Dialog'
+import DeadlineField, { formatLocalDeadline, roundedDeadline } from './DeadlineField'
 
 const purchaseAbi = JANUS_PURCHASE_ABI as Abi
 const createdAbi = [{
@@ -66,6 +68,7 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
   const [id, setId] = useState<Hash | undefined>(() => initialPurchaseId ?? readPendingPurchase(address, targetChainId)?.purchaseId)
   const [pending, setPending] = useState<PendingPurchaseTx | undefined>(() => readPendingPurchase(address, targetChainId))
   const [purchase, setPurchase] = useState<PurchaseSnapshot>()
+  const purchaseRecipientIdentity = useWalletIdentity(purchase?.recipient)
   const [contribution, setContribution] = useState(0n)
   const [claimed, setClaimed] = useState(false)
   const [allowance, setAllowance] = useState(0n)
@@ -83,6 +86,21 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
   const [target, setTarget] = useState('')
   const [funding, setFunding] = useState('')
   const [release, setRelease] = useState('')
+
+  function updateFunding(value: string) {
+    setFunding(value); setReview(undefined)
+    if (!release && value) {
+      const selected = new Date(value)
+      if (Number.isFinite(selected.getTime())) {
+        selected.setDate(selected.getDate() + 1)
+        setRelease(formatLocalDeadline(selected))
+      }
+    }
+  }
+
+  function updateRelease(value: string) {
+    setRelease(value); setReview(undefined)
+  }
   const [amount, setAmount] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState('')
   const [groupEntries, setGroupEntries] = useState<string[]>([])
@@ -256,7 +274,7 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
         recipient: draft.recipient, targetRaw: draft.amount.toString(),
         fundingDeadline: draft.fundingDeadline, releaseDeadline: draft.releaseDeadline,
       }
-      const detail = formatUnits(draft.amount, 6) + ' USDC target. Recipient: ' + draft.recipient +
+      const detail = formatUnits(draft.amount, 6) + ' USDC target. Recipient: ' + (resolved.username ? resolved.username + ' (' + draft.recipient + ')' : draft.recipient) +
         '. Funding closes ' + new Date(draft.fundingDeadline * 1000).toLocaleString() +
         '. Organizer may release after full funding and before ' + new Date(draft.releaseDeadline * 1000).toLocaleString() +
         '. Cancellation or expiry makes each contribution individually refundable.'
@@ -317,7 +335,7 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
           <div className="flex justify-between gap-3"><dt>Status</dt><dd>{statusNames[purchase.status] ?? 'Unknown'}</dd></div>
           <div className="flex justify-between gap-3"><dt>Funded</dt><dd>{formatUnits(purchase.funded, 6)} / {formatUnits(purchase.target, 6)} USDC</dd></div>
           <div><dt>Organizer</dt><dd className="mono text-xs break-all">{purchase.organizer}</dd></div>
-          <div><dt>Recipient</dt><dd className="mono text-xs break-all">{purchase.recipient}</dd></div>
+          <div><dt>Recipient</dt><dd>{purchaseRecipientIdentity.data?.username ? <span className="font-medium">@{purchaseRecipientIdentity.data.username}</span> : <span className="mono text-xs break-all">{purchase.recipient}</span>}{purchaseRecipientIdentity.data?.username && <span className="mono block text-xs break-all text-[#A8B0BE] mt-1">{purchase.recipient}</span>}</dd></div>
           <div><dt>Funding closes</dt><dd>{new Date(purchase.fundingDeadline * 1000).toLocaleString()}</dd></div>
           <div><dt>Release deadline</dt><dd>{new Date(purchase.releaseDeadline * 1000).toLocaleString()}</dd></div>
           <div><dt>Your contribution</dt><dd>{formatUnits(contribution, 6)} USDC{claimed ? ' — refund claimed' : ''}</dd></div>
@@ -350,10 +368,27 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
         {groups.isError && <p className="text-xs text-amber-300">Groups are unavailable. Manual participants still work.</p>}
         {groupNotice && <p role="status" className="text-xs text-emerald-300">{groupNotice}</p>}
         <label className="field-label">Participants<textarea className="janus-input min-h-24 resize-y mono" value={participants} onChange={event => setParticipants(event.target.value)} placeholder="@username, @another_user" autoComplete="off" spellCheck={false} /><span className="text-xs text-[#77808F]">Add 1-20 verified JANUS usernames, separated by commas or new lines.</span></label>
-        <label className="field-label">Recipient address or username<input className="janus-input mono" value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x… or @username" autoComplete="off" spellCheck={false} /></label>
+        <label className="field-label">Seller or pay recipient<input className="janus-input mono" value={recipient} onChange={event => { setRecipient(event.target.value); setReview(undefined) }} placeholder="@seller or 0x…" autoComplete="off" spellCheck={false} /><span className="block mt-2 text-xs text-[#A8B0BE]">This wallet receives the USDC after full funding and release. The recipient cannot be changed after creation.</span></label>
         <label className="field-label">Target (USDC)<input className="janus-input" inputMode="decimal" value={target} onChange={event => setTarget(event.target.value)} placeholder="0.00" /></label>
-        <label className="field-label">Funding deadline<input className="janus-input" type="datetime-local" value={funding} onChange={event => setFunding(event.target.value)} /></label>
-        <label className="field-label">Release deadline<input className="janus-input" type="datetime-local" value={release} onChange={event => setRelease(event.target.value)} /></label>
+        <DeadlineField label="Funding deadline" value={funding} onChange={updateFunding}
+
+          shortcuts={[
+            { label: 'In 1 hour', getValue: () => formatLocalDeadline(roundedDeadline(new Date(Date.now() + 60 * 60_000))) },
+            { label: 'Tomorrow at 6 PM', getValue: () => {
+              const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(18, 0, 0, 0)
+              return formatLocalDeadline(tomorrow)
+            } },
+          ]} />
+        <DeadlineField label="Release deadline" value={release} onChange={updateRelease}
+          minDate={funding ? funding.slice(0, 10) : undefined}
+          shortcuts={funding ? [
+            { label: '1 hour after funding', getValue: () => formatLocalDeadline(roundedDeadline(new Date(new Date(funding).getTime() + 60 * 60_000))) },
+            { label: '1 day after funding', getValue: () => {
+              const next = new Date(funding); next.setDate(next.getDate() + 1)
+              return formatLocalDeadline(next)
+            } },
+          ] : []}
+          hint={funding ? 'Times use your device’s local time zone.' : 'Set the funding deadline first to see release shortcuts.'} />
         <button className="janus-primary w-full" disabled={locked} onClick={() => { void reviewCreate() }}>Review purchase</button>
       </section>}
       {review && <section className="rounded-xl border border-[#4D6BFF]/50 p-4 space-y-3">

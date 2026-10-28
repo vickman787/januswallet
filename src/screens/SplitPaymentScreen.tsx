@@ -8,6 +8,7 @@ import { ARC_MAINNET_ID } from '../contracts'
 import { janusApi } from '../lib/api'
 import { ARC_USDC_ADDRESS } from '../lib/network'
 import { hasExpectedTransfer } from '../lib/payments'
+import { useWalletIdentity } from '../hooks/useWalletIdentity'
 import { buildTxExplorerUrl } from '../onchain-facts'
 
 type Split = {
@@ -43,6 +44,7 @@ export default function SplitPaymentScreen({ id, onClose }: { id: string; onClos
   const { writeContractAsync } = useWriteContract()
   const queries = useQueryClient()
   const split = useQuery({ queryKey: ['janus-split', id], queryFn: ({ signal }) => publicSplit(id, signal), retry: false })
+  const recipientIdentity = useWalletIdentity(split.data?.split.recipient_address)
   const [busy, setBusy] = useState<number>()
   const [hash, setHash] = useState<Hash>()
   const [pendingIndex, setPendingIndex] = useState<number>()
@@ -113,7 +115,7 @@ export default function SplitPaymentScreen({ id, onClose }: { id: string; onClos
       {split.data.split.description && <p className="text-sm text-[#A8B0BE]">{split.data.split.description}</p>}
       <dl className="text-sm space-y-2">
         <div className="flex justify-between gap-4"><dt>Total</dt><dd>{formatUnits(BigInt(split.data.split.total_raw), 6)} USDC</dd></div>
-        <div><dt className="text-[#A8B0BE]">Recipient</dt><dd className="mono text-xs break-all mt-1">{split.data.split.recipient_address}</dd></div>
+        <div><dt className="text-[#A8B0BE]">Recipient</dt><dd className="mt-1">{recipientIdentity.data?.username ? <span className="font-medium">@{recipientIdentity.data.username}</span> : <span className="mono text-xs break-all">{split.data.split.recipient_address}</span>}{recipientIdentity.data?.username && <span className="mono block text-xs break-all text-[#A8B0BE] mt-1">{split.data.split.recipient_address}</span>}</dd></div>
       </dl>
       <div className="space-y-3">
         {split.data.shares.map(share => <div className="rounded-xl border border-white/10 p-3" key={share.share_index}>

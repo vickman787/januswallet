@@ -30,6 +30,17 @@ const topics: Topic[] = [
     ],
   },
   {
+    id: 'wallets', title: 'Wallets & usernames',
+    summary: 'One JANUS account can use multiple wallets, but its username has one receiving address.',
+    points: [
+      { title: 'Connect another wallet', body: 'In Settings, choose Connect another wallet and connect the wallet you control. Select it under Active payment wallet, switch to Arc Mainnet, then verify it in your JANUS profile by signing a message. The verification signature does not send USDC.' },
+      { title: 'What does the active wallet do?', body: 'The active payment wallet is the wallet JANUS uses to sign and send transactions. Each connected wallet keeps its own USDC balance; connecting or switching wallets does not move funds between them.' },
+      { title: 'Where does @username receive money?', body: 'A JANUS username resolves to the account’s first verified Arc wallet. Payments sent to @username go to that wallet even if a different wallet is currently active.' },
+      { title: 'How does the second wallet receive?', body: 'Share the second wallet’s full address when you want a payment sent there. Ask the sender to check the resolved destination before confirming. Switching the active wallet does not redirect payments addressed to @username.' },
+      { title: 'Can each wallet have a different username?', body: 'Wallets linked to one JANUS account share that account’s username. A second username requires a separate JANUS account, and a verified wallet cannot be registered to two accounts.' },
+    ],
+  },
+  {
     id: 'split', title: 'Split a bill',
     summary: 'Exact shares paid directly to one recipient.',
     points: [

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatUnits } from 'viem'
 import { useAccount } from 'wagmi'
@@ -7,6 +7,7 @@ import { janusApi } from '../lib/api'
 import { mergeGroupParticipants, participantInputs, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../lib/groups'
 import { parseUsdcInput, splitUsdc } from '../lib/payments'
 import { resolveRecipientInput, type ResolvedRecipient } from '../lib/recipients'
+import { useWalletIdentity } from '../hooks/useWalletIdentity'
 import Dialog from './Dialog'
 
 type SplitResult = { share: bigint; recipient?: ResolvedRecipient; input?: string }
@@ -15,10 +16,23 @@ type CreatedSplit = { split: { id: string; title: string }; shares: { share_inde
 export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => void; onOpenDocs?: () => void }) {
   const auth = useJanusAuth()
   const { address } = useAccount()
+  const ownIdentity = useWalletIdentity(address)
+  const recipientEdited = useRef(false)
   const [kind, setKind] = useState<'named' | 'open'>('named')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [recipient, setRecipient] = useState(address ?? '')
+  useEffect(() => {
+    const username = ownIdentity.data?.username
+    if (!username || !address || recipientEdited.current) return
+    let active = true
+    void resolveRecipientInput('@' + username).then(resolved => {
+      if (active && !recipientEdited.current && resolved.address.toLowerCase() === address.toLowerCase()) {
+        setRecipient('@' + username)
+      }
+    }).catch(() => { /* Keep the exact wallet address if username lookup is unavailable. */ })
+    return () => { active = false }
+  }, [address, ownIdentity.data?.username])
   const [amount, setAmount] = useState('')
   const [count, setCount] = useState('2')
   const [participants, setParticipants] = useState('')
@@ -151,7 +165,7 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
       </fieldset>
       <label className="field-label">Title<input className="janus-input" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); resetReview() }} placeholder="Dinner" required /></label>
       <label className="field-label">Description, optional<input className="janus-input" maxLength={500} value={description} onChange={event => { setDescription(event.target.value); resetReview() }} placeholder="Friday dinner split" /></label>
-      <label className="field-label">Pay recipient<input className="janus-input mono" value={recipient} onChange={event => { setRecipient(event.target.value); resetReview() }} placeholder="@username or 0x…" required />
+      <label className="field-label">Pay recipient<input className="janus-input mono" value={recipient} onChange={event => { recipientEdited.current = true; setRecipient(event.target.value); resetReview() }} placeholder="@username or 0x…" required />
         <span className="block mt-2 text-xs text-[#A8B0BE]">Each payable share goes to this verified JANUS wallet.</span>
       </label>
       <label className="field-label">Total USDC<input className="janus-input" inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); resetReview() }} placeholder="0.00" required /></label>
