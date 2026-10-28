@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createServer } from 'node:http'
+import { createHandler } from '../server/handler.ts'
 import { mergeGroupParticipants, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../src/lib/groups'
 
 const groupId = '11111111-1111-4111-8111-111111111111'
@@ -34,4 +36,44 @@ test('group participant merge replaces the old group while preserving manual ent
 
 test('group selection enforces the product participant limit', () => {
   assert.throws(() => participantsForGroup(data, groupId, 0), /more than 0/)
+})
+
+test('group member Leave and organizer Remove accept bodyless DELETE requests', async () => {
+  const calls: string[] = []
+  const store = {
+    async profile(subject: string) { return { id: subject, username: subject, display_name: subject } },
+  } as import('../server/core.ts').Store
+  const products = {
+    async leaveGroup(id: string, memberId: string) { calls.push('leave:' + id + ':' + memberId); return true },
+    async removeGroupMember(id: string, organizerId: string, memberId: string) {
+      calls.push('remove:' + id + ':' + organizerId + ':' + memberId); return true
+    },
+  } as import('../server/products.ts').ProductStore
+  const origin = 'http://localhost:5173'
+  const server = createServer(createHandler({
+    origin, store, products,
+    verifyToken: async header => header === 'Bearer owner' ? 'owner' : 'member',
+    verifyWallet: async () => false,
+  }))
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const endpoint = 'http://127.0.0.1:' + (server.address() as { port: number }).port
+  try {
+    const leave = await fetch(endpoint + '/api/groups/' + groupId + '/membership', {
+      method: 'DELETE', headers: { Origin: origin, Authorization: 'Bearer member', 'Content-Type': 'application/json' },
+    })
+    assert.equal(leave.status, 200)
+    assert.deepEqual(await leave.json(), { left: true })
+    const remove = await fetch(endpoint + '/api/groups/' + groupId + '/members/22222222-2222-4222-8222-222222222222', {
+      method: 'DELETE', headers: { Origin: origin, Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+    })
+    assert.equal(remove.status, 200)
+    assert.deepEqual(await remove.json(), { removed: true })
+    assert.deepEqual(calls, [
+      'leave:' + groupId + ':member',
+      'remove:' + groupId + ':owner:22222222-2222-4222-8222-222222222222',
+    ])
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })

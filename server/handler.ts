@@ -139,7 +139,7 @@ export function createHandler(deps: Dependencies) {
 
       const subject = await deps.verifyToken(req.headers.authorization)
       limit('subject:' + subject, 60)
-      const body = req.method === 'GET' ? {} : await jsonBody(req)
+      const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await jsonBody(req)
       const profile = await deps.store.profile(subject)
 
       if (req.method === 'GET' && path === '/api/me') {
