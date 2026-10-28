@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { ApiError } from './core.js'
 
 export type ProductProfile = { id: string; username: string; display_name: string }
@@ -26,6 +27,7 @@ export type ProductPurchase = {
   group_id: string | null; title: string; description: string; creation_tx_hash: string; created_at: string
 }
 export type ProductPurchaseInvitation = { purchase: ProductPurchase; status: string; read_at: string | null; created_at: string }
+export type ProductActivityPurchase = { purchase: ProductPurchase; role: 'organizer' | 'invitee' }
 export type ProductNotification = {
   id: string; recipient_id: string; event_key: string; kind: string
   resource_id: string | null; read_at: string | null; created_at: string
@@ -38,7 +40,20 @@ export type ProductPurchaseNoticeKind =
   | 'purchase_fully_funded'
   | 'purchase_release_24h'
   | 'purchase_release_1h'
-export type ProductPurchaseNoticeState = { purchaseId: string; kind: ProductPurchaseNoticeKind | null }
+export type ProductPurchaseNoticeState = { purchaseId: string; kind: ProductPurchaseNoticeKind | null; terminal?: boolean }
+
+export function purchaseInboxComplete(input: {
+  status: number
+  role: 'organizer' | 'participant'
+  outstandingContribution: bigint
+  hasVerifiedWallet: boolean
+}): boolean {
+  if (input.status === 2) return true
+  if (input.status === 3 || input.status === 4) {
+    return input.role === 'organizer' || (input.hasVerifiedWallet && input.outstandingContribution === 0n)
+  }
+  return false
+}
 
 export function purchaseNotificationPlan(states: ProductPurchaseNoticeState[], existing: ProductNotification[]) {
   const desired = new Map(states.map(item => [item.purchaseId, item.kind]))
@@ -176,9 +191,11 @@ export interface ProductStore {
   splitsFor(profileId: string): Promise<ProductSplit[]>
   claimShare(splitId: string, index: number, profileId: string, wallet: string): Promise<ProductShare | null>
   confirmShare(splitId: string, index: number, profileId: string, wallet: string, hash: string): Promise<boolean>
-  inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; purchases: ProductPurchaseInvitation[]; notificationPurchases: ProductPurchase[] }>
+  inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; groupJoinNotices: { notificationId: string; group: ProductGroup; member: ProductProfile }[]; purchases: ProductPurchaseInvitation[]; notificationPurchases: ProductPurchase[] }>
   markNotification(id: string, profileId: string): Promise<boolean>
+  purchasesFor(profileId: string): Promise<ProductActivityPurchase[]>
   markPurchaseRead(purchaseId: string, profileId: string): Promise<boolean>
+  setPurchaseInvitationStatus(purchaseId: string, profileId: string, status: 'invited' | 'dismissed'): Promise<boolean>
   syncPurchaseNotifications(profileId: string, states: ProductPurchaseNoticeState[]): Promise<ProductNotification[]>
   savePurchase(ownerId: string, input: { chainId: number; contract: string; onchainId: string; groupId: string | null; title: string; description: string; txHash: string }, participants: ProductProfile[]): Promise<ProductPurchase>
 }
@@ -272,7 +289,9 @@ export function createProductStore(url: string, key: string): ProductStore {
       const groups = rows(await request('groups?id=in.(' + ids + ')&select=*&order=created_at.desc')).map(group)
       const visibleIds = memberships.filter(item => item.role === 'organizer' || item.status === 'accepted').map(item => item.group_id)
       if (!visibleIds.length) return { groups, memberships, members: [] }
+      const organizerGroups = new Set(memberships.filter(item => item.role === 'organizer').map(item => item.group_id))
       const roster = rows(await request('group_members?group_id=in.(' + visibleIds.join(',') + ')&select=*')).map(membership)
+        .filter(item => organizerGroups.has(item.group_id) || item.role === 'organizer' || item.status === 'accepted')
       const profileIds = [...new Set(roster.map(item => item.profile_id))]
       const profiles = profileIds.length
         ? rows(await request('profiles?id=in.(' + profileIds.join(',') + ')&select=id,username,display_name')).map(profile)
@@ -304,9 +323,21 @@ export function createProductStore(url: string, key: string): ProductStore {
     async leaveGroup(groupId, memberId) {
       const removed = rows(await request('group_members?group_id=eq.' + encodeURIComponent(groupId) + '&profile_id=eq.' + encodeURIComponent(memberId) + '&role=eq.member&status=eq.accepted&select=group_id', 'DELETE', undefined, 'return=representation'))
       return removed.length === 1
-    },    async respondGroup(groupId, profileId, status) {
+    },
+    async respondGroup(groupId, profileId, status) {
       const result = rows(await request('group_members?group_id=eq.' + encodeURIComponent(groupId) + '&profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=group_id', 'PATCH', { status }, 'return=representation'))
-      return result.length === 1
+      if (result.length !== 1) return false
+      if (status === 'accepted') {
+        const accepted = rows(await request('group_members?group_id=eq.' + encodeURIComponent(groupId) + '&status=eq.accepted&select=profile_id'))
+          .map(item => text(item, 'profile_id')).filter(id => id !== profileId)
+        if (accepted.length) {
+          const eventKey = 'group_joined:' + profileId + ':' + randomUUID()
+          await request('notifications', 'POST', accepted.map(recipientId => ({
+            recipient_id: recipientId, event_key: eventKey, kind: 'group_joined', resource_id: groupId,
+          })))
+        }
+      }
+      return true
     },
     async createSplit(ownerId, groupId, recipient, kind, total, title, description, memberProfiles, amounts) {
       const created = split(await insertOne('splits', {
@@ -364,7 +395,7 @@ export function createProductStore(url: string, key: string): ProductStore {
         request('group_members?profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=*'),
         request('notifications?recipient_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc&limit=100'),
         request('split_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&status=in.(unclaimed,reserved,pending)&select=*&order=split_id.asc,share_index.asc'),
-        request('purchase_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&status=eq.invited&select=*&order=created_at.desc'),
+        request('purchase_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&status=in.(invited,dismissed)&select=*&order=created_at.desc'),
         request('purchases?organizer_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc'),
       ])
       const invitedMemberships = rows(membershipsData).map(membership)
@@ -397,6 +428,21 @@ export function createProductStore(url: string, key: string): ProductStore {
         const parent = purchaseById.get(text(item, 'purchase_id'))
         return parent ? [{ purchase: parent, status: text(item, 'status'), read_at: optionalText(item, 'read_at'), created_at: text(item, 'created_at') }] : []
       })
+      const notifications = rows(notificationsData).map(notification)
+      const groupNoticeRows = notifications.filter(item => item.kind === 'group_joined' && item.resource_id)
+      const noticeGroupIds = [...new Set(groupNoticeRows.map(item => item.resource_id!))]
+      const noticeMemberIds = [...new Set(groupNoticeRows.map(item => item.event_key.split(':')[1]).filter(Boolean))]
+      const [noticeGroupData, noticeMemberData] = await Promise.all([
+        noticeGroupIds.length ? request('groups?id=in.(' + noticeGroupIds.join(',') + ')&select=*') : Promise.resolve([]),
+        noticeMemberIds.length ? request('profiles?id=in.(' + noticeMemberIds.join(',') + ')&select=id,username,display_name') : Promise.resolve([]),
+      ])
+      const noticeGroups = new Map(rows(noticeGroupData).map(item => { const value = group(item); return [value.id, value] }))
+      const noticeMembers = new Map(rows(noticeMemberData).map(item => { const value = profile(item); return [value.id, value] }))
+      const groupJoinNotices = groupNoticeRows.flatMap(item => {
+        const parent = item.resource_id ? noticeGroups.get(item.resource_id) : undefined
+        const member = noticeMembers.get(item.event_key.split(':')[1])
+        return parent && member ? [{ notificationId: item.id, group: parent, member }] : []
+      })
       const notificationPurchases = [...new Map([
         ...purchaseRecords,
         ...rows(organizedPurchaseData).map(purchase),
@@ -404,19 +450,41 @@ export function createProductStore(url: string, key: string): ProductStore {
       return {
         requests: rows(requestsData).map(paymentRequest),
         memberships: invitedMemberships,
-        notifications: rows(notificationsData).map(notification),
+        notifications,
         splits,
         groups,
+        groupJoinNotices,
         purchases,
         notificationPurchases,
       }
+    },
+    async purchasesFor(profileId) {
+      const [ownedData, participantData] = await Promise.all([
+        request('purchases?organizer_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc'),
+        request('purchase_participants?profile_id=eq.' + encodeURIComponent(profileId) + '&select=purchase_id'),
+      ])
+      const owned = rows(ownedData).map(purchase)
+      const ownedIds = new Set(owned.map(item => item.id))
+      const invitedIds = [...new Set(rows(participantData).map(item => text(item, 'purchase_id')))].filter(id => !ownedIds.has(id))
+      const invited = invitedIds.length
+        ? rows(await request('purchases?id=in.(' + invitedIds.join(',') + ')&select=*&order=created_at.desc')).map(purchase)
+        : []
+      return [
+        ...owned.map(item => ({ purchase: item, role: 'organizer' as const })),
+        ...invited.map(item => ({ purchase: item, role: 'invitee' as const })),
+      ].sort((left, right) => Date.parse(right.purchase.created_at) - Date.parse(left.purchase.created_at))
     },
     async markPurchaseRead(purchaseId, profileId) {
       const result = rows(await request('purchase_participants?purchase_id=eq.' + encodeURIComponent(purchaseId) + '&profile_id=eq.' + encodeURIComponent(profileId) + '&read_at=is.null&select=purchase_id', 'PATCH', {
         read_at: new Date().toISOString(),
       }, 'return=representation'))
       return result.length <= 1
-    },    async markNotification(id, profileId) {
+    },
+    async setPurchaseInvitationStatus(purchaseId, profileId, status) {
+      const result = rows(await request('purchase_participants?purchase_id=eq.' + encodeURIComponent(purchaseId) + '&profile_id=eq.' + encodeURIComponent(profileId) + '&select=purchase_id', 'PATCH', { status }, 'return=representation'))
+      return result.length === 1
+    },
+    async markNotification(id, profileId) {
       const result = rows(await request('notifications?id=eq.' + encodeURIComponent(id) + '&recipient_id=eq.' + encodeURIComponent(profileId) + '&read_at=is.null&select=id', 'PATCH', { read_at: new Date().toISOString() }, 'return=representation'))
       return result.length === 1
     },

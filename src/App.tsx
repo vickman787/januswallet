@@ -21,7 +21,7 @@ import type { Hash } from 'viem'
 type InboxCountData = {
   splits: unknown[]
   groups: unknown[]
-  purchases: { purchase: { id: string }; read_at: string | null }[]
+  purchases: { purchase: { id: string }; status: string; read_at: string | null }[]
   notifications: { kind: string; resource_id: string | null; read_at: string | null }[]
 }
 
@@ -82,21 +82,22 @@ function AccountApp() {
     new URLSearchParams(window.location.search).get('test-contract') === 'janus-purchase'
   if (purchaseRoute) return <div className="min-h-dvh bg-[#0B0D12]">
     <SharedPurchase network={purchaseRoute.chainId === 5042002 ? 'testnet' : 'mainnet'} initialPurchaseId={purchaseRoute.id}
-      onClose={() => { history.replaceState(null, '', window.location.pathname + window.location.search); setPurchaseRoute(undefined); setScreen('inbox') }} />
+      onClose={() => { history.replaceState(null, '', window.location.pathname + window.location.search); setPurchaseRoute(undefined) }} />
   </div>
   if (splitId) return <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>
     <Header onHome={() => leaveSplit('home')} onOpenAccount={() => leaveSplit('settings')} />
     <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px' }}>
-      <div className="max-w-md mx-auto w-full"><SplitPaymentScreen id={splitId} onClose={() => leaveSplit('wallet')} /></div>
+      <div className="max-w-md mx-auto w-full"><SplitPaymentScreen id={splitId} returnTo={screen} onClose={() => leaveSplit(screen)} onCompletedClose={() => leaveSplit('wallet')} /></div>
     </main>
   </div>
 
   const purchaseNotices = (inbox.data?.notifications ?? []).filter(item => item.kind.startsWith('purchase_'))
   const unreadPurchaseNotices = purchaseNotices.filter(item => !item.read_at)
+  const unreadGroupJoinNotices = (inbox.data?.notifications ?? []).filter(item => item.kind === 'group_joined' && !item.read_at)
   const noticePurchaseIds = new Set(purchaseNotices.map(item => item.resource_id).filter(Boolean))
   const inboxCount = (inbox.data?.splits.length ?? 0) + (inbox.data?.groups.length ?? 0) +
-    (inbox.data?.purchases.filter(item => !item.read_at && !noticePurchaseIds.has(item.purchase.id)).length ?? 0) +
-    unreadPurchaseNotices.length
+    (inbox.data?.purchases.filter(item => item.status === 'invited' && !item.read_at && !noticePurchaseIds.has(item.purchase.id)).length ?? 0) +
+    unreadPurchaseNotices.length + unreadGroupJoinNotices.length
 
   return (
     <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>

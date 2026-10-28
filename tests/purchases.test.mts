@@ -76,3 +76,104 @@ test('refund inbox notice requires a cancelled or expired unclaimed contribution
   assert.equal(purchaseRefundNotice(4, [{ amount: 200_000n, claimed: true }]), null)
   assert.equal(purchaseRefundNotice(3, [{ amount: 1n, claimed: true }, { amount: 2n, claimed: false }]), 'cancelled')
 })
+test('purchase invitation dismissal and restore are scoped to one recipient', async () => {
+  const { createProductStore } = await import('../server/products.ts')
+  const original = globalThis.fetch
+  const calls: { url: string; method: string; body: unknown }[] = []
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      body: init?.body ? JSON.parse(String(init.body)) as unknown : null,
+    })
+    return new Response(JSON.stringify([{ purchase_id: '11111111-1111-4111-8111-111111111111' }]), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  try {
+    const store = createProductStore('https://database.example', 'test-server-key')
+    const id = '11111111-1111-4111-8111-111111111111'
+    const member = '22222222-2222-4222-8222-222222222222'
+    assert.equal(await store.setPurchaseInvitationStatus(id, member, 'dismissed'), true)
+    assert.equal(await store.setPurchaseInvitationStatus(id, member, 'invited'), true)
+    assert.equal(calls.length, 2)
+    assert.ok(calls.every(call => call.method === 'PATCH' &&
+      call.url.includes('purchase_id=eq.' + id) &&
+      call.url.includes('profile_id=eq.' + member) &&
+      call.url.includes('/purchase_participants?')))
+    assert.deepEqual(calls.map(call => call.body), [{ status: 'dismissed' }, { status: 'invited' }])
+  } finally { globalThis.fetch = original }
+})
+
+test('purchase invitation dismissal uses the authenticated profile', async () => {
+  const { createServer } = await import('node:http')
+  const { createHandler } = await import('../server/handler.ts')
+  const id = '11111111-1111-4111-8111-111111111111'
+  const calls: string[] = []
+  const store = {
+    async profile(subject: string) { return { id: subject, username: subject, display_name: subject } },
+  } as import('../server/core.ts').Store
+  const products = {
+    async setPurchaseInvitationStatus(purchaseId: string, profileId: string, status: string) {
+      calls.push(purchaseId + ':' + profileId + ':' + status)
+      return true
+    },
+  } as import('../server/products.ts').ProductStore
+  const origin = 'http://localhost:5173'
+  const server = createServer(createHandler({
+    origin, store, products,
+    verifyToken: async header => header === 'Bearer vickman' ? 'vickman' : 'other',
+    verifyWallet: async () => false,
+  }))
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const endpoint = 'http://127.0.0.1:' + (server.address() as { port: number }).port
+  try {
+    for (const action of ['dismiss', 'restore']) {
+      const response = await fetch(endpoint + '/api/purchases/' + id + '/' + action, {
+        method: 'POST',
+        headers: { Origin: origin, Authorization: 'Bearer vickman', 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      assert.equal(response.status, 200)
+    }
+    assert.deepEqual(calls, [id + ':vickman:dismissed', id + ':vickman:invited'])
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
+test('purchase Activity includes only purchases organized by or invited to the account', async () => {
+  const { createProductStore } = await import('../server/products.ts')
+  const original = globalThis.fetch
+  const profileId = '11111111-1111-4111-8111-111111111111'
+  const ownedId = '22222222-2222-4222-8222-222222222222'
+  const invitedId = '33333333-3333-4333-8333-333333333333'
+  const row = (id: string, createdAt: string) => ({
+    id, chain_id: 5042, contract_address: contract, onchain_id: '0x' + 'ab'.repeat(32),
+    organizer_id: profileId, group_id: null, title: id, description: '',
+    creation_tx_hash: '0x' + 'cd'.repeat(32), created_at: createdAt,
+  })
+  const calls: string[] = []
+  globalThis.fetch = async input => {
+    const url = String(input)
+    calls.push(url)
+    const records = url.includes('/purchases?organizer_id=eq.')
+      ? [row(ownedId, '2026-10-28T10:00:00Z')]
+      : url.includes('/purchase_participants?profile_id=eq.')
+        ? [{ purchase_id: ownedId }, { purchase_id: invitedId }]
+        : url.includes('/purchases?id=in.')
+          ? [row(invitedId, '2026-10-28T11:00:00Z')]
+          : []
+    return new Response(JSON.stringify(records), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const activity = await createProductStore('https://database.example', 'test-server-key').purchasesFor(profileId)
+    assert.deepEqual(activity.map(item => [item.purchase.id, item.role]), [
+      [invitedId, 'invitee'], [ownedId, 'organizer'],
+    ])
+    assert.ok(calls.some(url => url.includes('organizer_id=eq.' + profileId)))
+    assert.ok(calls.some(url => url.includes('profile_id=eq.' + profileId)))
+    assert.ok(calls.some(url => url.includes('id=in.(' + invitedId + ')')))
+  } finally { globalThis.fetch = original }
+})

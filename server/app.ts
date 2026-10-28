@@ -3,7 +3,7 @@ import { arc, arcTestnet } from 'viem/chains'
 import { hasExpectedTransfer } from '../src/lib/payments.js'
 import { createTokenVerifier, createStore } from './core.js'
 import { createHandler } from './handler.js'
-import { createProductStore, purchaseNoticeKind, type ProductPurchaseNoticeState } from './products.js'
+import { createProductStore, purchaseInboxComplete, purchaseNoticeKind, type ProductPurchaseNoticeState } from './products.js'
 
 const arcUsdc = '0x3600000000000000000000000000000000000000' as const
 const testnetPurchase = '0xbcae6c22c0c3c2509f920613a4900065bfe00442'
@@ -100,6 +100,9 @@ export function createJanusHandler() {
           }
           return {
             purchaseId: purchase.id,
+            terminal: purchaseInboxComplete({
+              status, role, outstandingContribution: contribution, hasVerifiedWallet: wallets.length > 0,
+            }),
             kind: purchaseNoticeKind({
               role,
               status,

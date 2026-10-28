@@ -183,12 +183,18 @@ export function createHandler(deps: Dependencies) {
           try {
             const wallets = (await deps.store.wallets(profile.id)).map(item => walletAddress(item.address))
             const states = await deps.purchaseNoticeStates(result.notificationPurchases, wallets, profile.id)
+            const completedIds = new Set(states.filter(item => item.terminal).map(item => item.purchaseId))
+            result.purchases = result.purchases.filter(item => !completedIds.has(item.purchase.id))
             result.notifications = await deps.products.syncPurchaseNotifications(profile.id, states)
           } catch { /* Keep the stored inbox available when Arc reconciliation is temporarily unavailable. */ }
         }
         return reply(200, result)
       }
 
+      if (path === '/api/purchases' && req.method === 'GET') {
+        if (!deps.products) throw new ApiError(503, 'Purchase service is not configured.')
+        return reply(200, { purchases: await deps.products.purchasesFor(profile.id) })
+      }
       if (path === '/api/purchases' && req.method === 'POST') {
         if (!deps.products || !deps.verifyPurchaseCreation) throw new ApiError(503, 'Purchase invitation service is not configured.')
         const chainId = body.chainId
@@ -236,6 +242,14 @@ export function createHandler(deps: Dependencies) {
         if (!deps.products || !uuid.test(purchaseRead[1])) throw new ApiError(404, 'Purchase invitation not found.')
         await deps.products.markPurchaseRead(purchaseRead[1], profile.id)
         return reply(200, { read: true })
+      }
+      const purchaseInvitationStatus = /^\/api\/purchases\/([0-9a-f-]{36})\/(dismiss|restore)$/.exec(path)
+      if (req.method === 'POST' && purchaseInvitationStatus) {
+        if (!deps.products || !uuid.test(purchaseInvitationStatus[1])) throw new ApiError(404, 'Purchase invitation not found.')
+        const status = purchaseInvitationStatus[2] === 'dismiss' ? 'dismissed' : 'invited'
+        const changed = await deps.products.setPurchaseInvitationStatus(purchaseInvitationStatus[1], profile.id, status)
+        if (!changed) throw new ApiError(404, 'Purchase invitation not found.')
+        return reply(200, { status })
       }
       const notificationRead = /^\/api\/notifications\/([0-9a-f-]{36})\/read$/.exec(path)
       if (req.method === 'POST' && notificationRead) {

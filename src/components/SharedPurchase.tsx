@@ -177,6 +177,7 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
             groupId: metadata.groupId,
           },
         })
+        await queries.invalidateQueries({ queryKey: ['janus-purchase-activity', auth.subject] })
       }
       clearPendingPurchase(address, targetChainId); setPending(undefined); setHash(submittedHash); setReview(undefined)
       setNotice(kind === 'approve' ? 'Exact allowance confirmed. Review the contribution next.' : 'Action confirmed on ' + networkName + '.')

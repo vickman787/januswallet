@@ -15,7 +15,7 @@
     "test:browser": "node tests/browser-check.mjs",
     "lint": "oxlint --type-aware src scripts server",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
-    "dev:api": "node --env-file-if-exists=.env.server --import tsx server/index.ts",
+    "dev:api": "node --watch --env-file-if-exists=.env.server --import tsx server/index.ts",
     "test:browser:auth": "node tests/auth-browser-check.mjs",
     "contracts:preflight": "node scripts/check-arc-purchase-environment.mjs"
   },

@@ -36,7 +36,7 @@ async function publicSplit(id: string, signal: AbortSignal): Promise<SplitPayloa
   return result as SplitPayload
 }
 
-export default function SplitPaymentScreen({ id, onClose }: { id: string; onClose: () => void }) {
+export default function SplitPaymentScreen({ id, returnTo, onClose, onCompletedClose }: { id: string; returnTo: string; onClose: () => void; onCompletedClose: () => void }) {
   const auth = useJanusAuth()
   const { address, chainId } = useAccount()
   const client = usePublicClient({ chainId: ARC_MAINNET_ID })
@@ -107,7 +107,7 @@ export default function SplitPaymentScreen({ id, onClose }: { id: string; onClos
   }
 
   return <div className="p-4 space-y-4">
-    <button className="text-sm text-[#9BAEFF] py-2" onClick={onClose}>← Back to wallet</button>
+    <button className="text-sm text-[#9BAEFF] py-2" onClick={confirmed !== undefined ? onCompletedClose : onClose}>← Back to {confirmed !== undefined ? 'wallet' : returnTo}</button>
     {split.isPending && <p role="status">Loading split…</p>}
     {split.error && <section className="janus-panel p-5"><p role="alert">{split.error.message}</p><button className="janus-secondary mt-4" onClick={() => { void split.refetch() }}>Retry</button></section>}
     {split.data && <section className="janus-panel p-5 space-y-4">

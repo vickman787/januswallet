@@ -45,6 +45,11 @@ type InboxNotification = {
   created_at: string
 }
 type PurchaseNotification = { notification: InboxNotification; purchase: PurchaseInvite['purchase'] }
+type GroupJoinNotice = {
+  notificationId: string
+  group: { id: string; name: string }
+  member: { id: string; username: string; display_name: string }
+}
 type InboxData = {
   splits: InboxSplit[]
   groups: GroupInvite[]
@@ -53,12 +58,14 @@ type InboxData = {
   memberships: unknown[]
   notifications: InboxNotification[]
   notificationPurchases: PurchaseInvite['purchase'][]
+  groupJoinNotices: GroupJoinNotice[]
 }
 
 export default function InboxScreen() {
   const auth = useJanusAuth()
   const queries = useQueryClient()
   const [responding, setResponding] = useState<string>()
+  const [updatingPurchase, setUpdatingPurchase] = useState<string>()
   const [responseError, setResponseError] = useState('')
   const inbox = useQuery({
     queryKey: ['janus-inbox', auth.subject],
@@ -71,6 +78,10 @@ export default function InboxScreen() {
   const splits = inbox.data?.splits ?? []
   const groups = inbox.data?.groups ?? []
   const purchases = inbox.data?.purchases ?? []
+  const groupJoinNotices = (inbox.data?.groupJoinNotices ?? []).flatMap(item => {
+    const notification = inbox.data?.notifications.find(candidate => candidate.id === item.notificationId)
+    return notification ? [{ ...item, notification }] : []
+  })
   const purchaseById = new Map((inbox.data?.notificationPurchases ?? []).map(item => [item.id, item]))
   const purchaseNotices: PurchaseNotification[] = (inbox.data?.notifications ?? []).flatMap(notification => {
     if (!notification.kind.startsWith('purchase_')) return []
@@ -78,7 +89,8 @@ export default function InboxScreen() {
     return purchase ? [{ notification, purchase }] : []
   })
   const noticePurchaseIds = new Set(purchaseNotices.map(item => item.purchase.id))
-  const visiblePurchases = purchases.filter(item => !noticePurchaseIds.has(item.purchase.id))
+  const visiblePurchases = purchases.filter(item => item.status === 'invited' && !noticePurchaseIds.has(item.purchase.id))
+  const archivedPurchases = purchases.filter(item => item.status === 'dismissed')
   async function openPurchase(item: PurchaseInvite) {
     try {
       if (!item.read_at) {
@@ -88,6 +100,15 @@ export default function InboxScreen() {
     } finally {
       window.location.hash = 'purchase=' + item.purchase.chain_id + ':' + item.purchase.onchain_id
     }
+  }
+  async function changePurchaseStatus(item: PurchaseInvite, action: 'dismiss' | 'restore') {
+    setUpdatingPurchase(item.purchase.id); setResponseError('')
+    try {
+      await janusApi(auth, 'purchases/' + item.purchase.id + '/' + action, { method: 'POST', body: {} })
+      await queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] })
+    } catch (cause) {
+      setResponseError(cause instanceof Error ? cause.message : 'Unable to update this purchase invitation.')
+    } finally { setUpdatingPurchase(undefined) }
   }
   async function openNotice(item: PurchaseNotification) {
     try {
@@ -120,6 +141,16 @@ export default function InboxScreen() {
     } finally { setResponding(undefined) }
   }
 
+  async function markGroupNotice(notificationId: string) {
+    setResponding(notificationId); setResponseError('')
+    try {
+      await janusApi(auth, 'notifications/' + notificationId + '/read', { method: 'POST', body: {} })
+      await queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] })
+    } catch (cause) {
+      setResponseError(cause instanceof Error ? cause.message : 'Unable to mark this notification as read.')
+    } finally { setResponding(undefined) }
+  }
+
   return (
     <div className="flex flex-col pb-4">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
@@ -134,7 +165,7 @@ export default function InboxScreen() {
         <button className="janus-secondary mt-4" onClick={() => { void inbox.refetch() }}>Retry</button>
       </div>}
 
-      {!inbox.isPending && !inbox.error && splits.length === 0 && groups.length === 0 && visiblePurchases.length === 0 && purchaseNotices.length === 0 && <div className="mx-4 rounded-2xl py-16 flex flex-col items-center gap-3"
+      {!inbox.isPending && !inbox.error && splits.length === 0 && groups.length === 0 && visiblePurchases.length === 0 && purchaseNotices.length === 0 && groupJoinNotices.length === 0 && <div className="mx-4 rounded-2xl py-16 flex flex-col items-center gap-3"
         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
         <span className="flex items-center justify-center w-12 h-12 rounded-full"
           style={{ background: 'rgba(77,107,255,0.08)', border: '1px solid rgba(77,107,255,0.15)' }}>
@@ -151,6 +182,22 @@ export default function InboxScreen() {
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#4D6BFF]/25 bg-[#4D6BFF]/10"><Users size={18} className="text-[#9BAEFF]" /></span>
             <div className="min-w-0 flex-1"><p className="font-semibold break-words">{item.group.name}</p><p className="mt-1 text-xs text-[#77808F]">Group invitation</p>{item.group.description && <p className="mt-3 text-sm text-[#A8B0BE] break-words">{item.group.description}</p>}
               <div className="mt-4 grid grid-cols-2 gap-2"><button className="janus-secondary" disabled={responding === item.group.id} onClick={() => { void respond(item.group.id, 'declined') }}>Decline</button><button className="janus-primary" disabled={responding === item.group.id} onClick={() => { void respond(item.group.id, 'accepted') }}>{responding === item.group.id ? 'Saving…' : 'Accept'}</button></div>
+            </div>
+          </div>
+        </li>)}
+      </ul>}
+
+      {groupJoinNotices.length > 0 && <ul className="px-4 space-y-3 mb-3">
+        {groupJoinNotices.map(item => <li key={item.notificationId} className="janus-panel p-4">
+          <div className="flex items-start gap-3">
+            <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#4D6BFF]/25 bg-[#4D6BFF]/10">
+              <Users size={18} className="text-[#9BAEFF]" />
+              {!item.notification.read_at && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[#4D6BFF]" aria-label="Unread" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-[#F1F3F2] break-words">New member joined {item.group.name}</p>
+              <p className="mt-2 text-sm text-[#A8B0BE] break-words">{item.member.display_name} (@{item.member.username}) accepted the invitation.</p>
+              {!item.notification.read_at && <button className="janus-secondary w-full mt-4" disabled={responding === item.notificationId} onClick={() => { void markGroupNotice(item.notificationId) }}>{responding === item.notificationId ? 'Saving…' : 'Mark as read'}</button>}
             </div>
           </div>
         </li>)}
@@ -206,10 +253,24 @@ export default function InboxScreen() {
               <p className="mt-1 text-xs text-[#77808F]">Shared purchase invitation - {item.purchase.chain_id === 5042002 ? 'Arc Testnet' : 'Arc Mainnet'}</p>
               {item.purchase.description && <p className="mt-3 text-sm text-[#A8B0BE] break-words">{item.purchase.description}</p>}
               <button className="janus-primary w-full mt-4" onClick={() => { void openPurchase(item) }}>Open purchase</button>
+              <button type="button" className="janus-secondary w-full mt-2" disabled={updatingPurchase === item.purchase.id} onClick={() => { void changePurchaseStatus(item, 'dismiss') }}>{updatingPurchase === item.purchase.id ? 'Saving…' : 'Dismiss invitation'}</button>
             </div>
           </div>
         </li>)}
       </ul>}
+      {archivedPurchases.length > 0 && <details className="mx-4 mb-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
+        <summary className="cursor-pointer text-sm font-medium text-[#A8B0BE]">Dismissed purchase invitations ({archivedPurchases.length})</summary>
+        <ul className="mt-4 space-y-3">
+          {archivedPurchases.map(item => <li key={item.purchase.id} className="rounded-xl border border-white/[0.08] p-4">
+            <p className="font-semibold text-[#F1F3F2] break-words">{item.purchase.title}</p>
+            <p className="mt-1 text-xs text-[#77808F]">{item.purchase.chain_id === 5042002 ? 'Arc Testnet' : 'Arc Mainnet'} purchase</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button type="button" className="janus-secondary" onClick={() => { void openPurchase(item) }}>Open purchase</button>
+              <button type="button" className="janus-secondary" disabled={updatingPurchase === item.purchase.id} onClick={() => { void changePurchaseStatus(item, 'restore') }}>{updatingPurchase === item.purchase.id ? 'Saving…' : 'Restore'}</button>
+            </div>
+          </li>)}
+        </ul>
+      </details>}
       {splits.length > 0 && <ul className="px-4 space-y-3">
         {splits.map(item => <li key={item.split.id + ':' + item.share.share_index} className="janus-panel p-4">
           <div className="flex items-start gap-3">

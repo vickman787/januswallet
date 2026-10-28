@@ -64,3 +64,59 @@ test('refund alerts take priority for contributors and disappear after claim', (
   assert.equal(purchaseNoticeKind({ ...base, status: 4 }), 'purchase_refund_expired')
   assert.equal(purchaseNoticeKind({ ...base, refundClaimed: true }), null)
 })
+
+test('completed purchases leave Inbox, while active and refundable purchases stay visible', async () => {
+  const { purchaseInboxComplete } = await import('../server/products.ts')
+  const base = { role: 'participant' as const, outstandingContribution: 0n, hasVerifiedWallet: true }
+  assert.equal(purchaseInboxComplete({ ...base, status: 2 }), true)
+  assert.equal(purchaseInboxComplete({ ...base, status: 4 }), true)
+  assert.equal(purchaseInboxComplete({ ...base, status: 3, outstandingContribution: 1n }), false)
+  assert.equal(purchaseInboxComplete({ ...base, status: 4, hasVerifiedWallet: false }), false)
+  assert.equal(purchaseInboxComplete({ ...base, status: 0 }), false)
+  assert.equal(purchaseInboxComplete({ ...base, status: 1 }), false)
+  assert.equal(purchaseInboxComplete({ ...base, status: 4, role: 'organizer' }), true)
+})
+
+test('Inbox API filters terminal invitations only after on-chain reconciliation', async () => {
+  const { createServer } = await import('node:http')
+  const { createHandler } = await import('../server/handler.ts')
+  const completedId = '11111111-1111-4111-8111-111111111111'
+  const activeId = '22222222-2222-4222-8222-222222222222'
+  const store = {
+    async profile() { return { id: 'profile', username: 'vickman', display_name: 'Vickman' } },
+    async wallets() { return [] },
+  } as import('../server/core.ts').Store
+  const products = {
+    async inbox() {
+      const purchases = [completedId, activeId].map(id => ({
+        purchase: { id }, status: 'invited', read_at: '2026-10-28T00:00:00Z', created_at: '2026-10-28T00:00:00Z',
+      }))
+      return {
+        requests: [], memberships: [], notifications: [], splits: [], groups: [],
+        groupJoinNotices: [], purchases, notificationPurchases: purchases.map(item => item.purchase),
+      }
+    },
+    async syncPurchaseNotifications() { return [] },
+  } as unknown as import('../server/products.ts').ProductStore
+  const server = createServer(createHandler({
+    origin: 'http://localhost:5173', store, products,
+    verifyToken: async () => 'subject', verifyWallet: async () => false,
+    purchaseNoticeStates: async () => [
+      { purchaseId: completedId, kind: null, terminal: true },
+      { purchaseId: activeId, kind: null, terminal: false },
+    ],
+  }))
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const endpoint = 'http://127.0.0.1:' + (server.address() as { port: number }).port
+    const response = await fetch(endpoint + '/api/inbox', {
+      headers: { Authorization: 'Bearer test', Origin: 'http://localhost:5173' },
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json() as { purchases: { purchase: { id: string } }[] }
+    assert.deepEqual(body.purchases.map(item => item.purchase.id), [activeId])
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})

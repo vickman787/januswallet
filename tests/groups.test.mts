@@ -77,3 +77,37 @@ test('group member Leave and organizer Remove accept bodyless DELETE requests', 
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
 })
+
+
+test('accepting a group invitation notifies only existing accepted members', async () => {
+  const { createProductStore } = await import('../server/products.ts')
+  const original = globalThis.fetch
+  const calls: { path: string; method: string; body: unknown }[] = []
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input)).pathname + new URL(String(input)).search
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(String(init.body)) as unknown : null
+    calls.push({ path, method, body })
+    const result = method === 'PATCH'
+      ? [{ group_id: groupId }]
+      : method === 'GET'
+        ? [{ profile_id: 'owner' }, { profile_id: 'existing' }, { profile_id: 'new-member' }]
+        : []
+    return new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const store = createProductStore('https://database.example', 'test-server-key')
+    assert.equal(await store.respondGroup(groupId, 'new-member', 'accepted'), true)
+    const inserted = calls.find(call => call.method === 'POST')
+    assert.ok(inserted)
+    assert.match(inserted.path, /\/rest\/v1\/notifications$/)
+    const notices = inserted.body as { recipient_id: string; kind: string; resource_id: string; event_key: string }[]
+    assert.deepEqual(notices.map(item => item.recipient_id), ['owner', 'existing'])
+    assert.ok(notices.every(item => item.kind === 'group_joined' && item.resource_id === groupId))
+    assert.ok(notices.every(item => item.event_key.startsWith('group_joined:new-member:')))
+
+    calls.length = 0
+    assert.equal(await store.respondGroup(groupId, 'new-member', 'declined'), true)
+    assert.equal(calls.some(call => call.method === 'POST'), false)
+  } finally { globalThis.fetch = original }
+})

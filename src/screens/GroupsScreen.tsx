@@ -37,6 +37,7 @@ export default function GroupsScreen() {
     enabled: auth.authenticated && !!auth.subject,
     queryFn: ({ signal }) => janusApi<GroupsData>(auth, 'groups', { signal }),
     staleTime: 10_000,
+    refetchInterval: 30_000,
     refetchOnWindowFocus: true,
     retry: false,
   })
@@ -50,6 +51,9 @@ export default function GroupsScreen() {
   const selectedMembers = (groups.data?.members ?? []).filter(member => member.group_id === selectedId)
     .sort((left, right) => left.role === 'organizer' ? -1 : right.role === 'organizer' ? 1 : left.username.localeCompare(right.username))
   const isOrganizer = selectedMembership?.role === 'organizer'
+  const acceptedMembers = selectedMembers.filter(member => member.role === 'organizer' || member.status === 'accepted')
+  const pendingMembers = isOrganizer ? selectedMembers.filter(member => member.status === 'invited') : []
+  const declinedMembers = isOrganizer ? selectedMembers.filter(member => member.status === 'declined') : []
 
   async function refreshGroups() {
     await Promise.all([
@@ -127,7 +131,7 @@ export default function GroupsScreen() {
     {visibleGroups.length > 0 && <ul className="px-4 space-y-3">
       {visibleGroups.map(group => {
         const membership = membershipByGroup.get(group.id)
-        const memberCount = (groups.data?.members ?? []).filter(member => member.group_id === group.id).length
+        const memberCount = (groups.data?.members ?? []).filter(member => member.group_id === group.id && (member.role === 'organizer' || member.status === 'accepted')).length
         return <li key={group.id}>
           <button type="button" onClick={() => { setActionError(''); setNewMembers(''); setSelectedId(group.id) }} className="janus-panel w-full p-4 text-left focus-visible:ring-2 focus-visible:ring-[#4D6BFF]">
             <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#4D6BFF]/25 bg-[#4D6BFF]/10"><Users size={18} className="text-[#9BAEFF]" /></span>
@@ -146,9 +150,9 @@ export default function GroupsScreen() {
       </div>
 
       <section className="mt-6" aria-labelledby="group-members-heading">
-        <div className="flex items-center justify-between gap-3"><h3 id="group-members-heading" className="font-semibold">Members</h3><span className="text-xs text-[#77808F]">{selectedMembers.length} total</span></div>
+        <div className="flex items-center justify-between gap-3"><h3 id="group-members-heading" className="font-semibold">Members</h3><span className="text-xs text-[#77808F]">{acceptedMembers.length} total</span></div>
         <ul className="mt-3 space-y-2">
-          {selectedMembers.map(member => <li key={member.profile_id} className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+          {acceptedMembers.map(member => <li key={member.profile_id} className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#4D6BFF]/10 text-sm font-semibold text-[#9BAEFF]">{member.display_name.slice(0, 1).toUpperCase()}</span>
             <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{member.display_name}</p><p className="truncate text-xs text-[#77808F]">@{member.username} · {memberStatus(member)}</p></div>
             {isOrganizer && member.role !== 'organizer' && <button type="button" disabled={!!removing || actionBusy} onClick={() => { void removeMember(member) }} aria-label={`Remove @${member.username} from ${selectedGroup.name}`} className="flex min-h-9 items-center gap-1 rounded-lg px-2 text-xs text-rose-300 hover:bg-rose-400/10 disabled:opacity-50"><Trash2 size={14} />{removing === member.profile_id ? 'Removing…' : 'Remove'}</button>}
@@ -156,6 +160,8 @@ export default function GroupsScreen() {
         </ul>
       </section>
 
+      {isOrganizer && pendingMembers.length > 0 && <section className="mt-6 border-t border-white/[0.08] pt-5"><h3 className="font-semibold">Pending invitations · {pendingMembers.length}</h3><ul className="mt-3 space-y-2">{pendingMembers.map(member => <li key={member.profile_id} className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{member.display_name}</p><p className="truncate text-xs text-[#77808F]">@{member.username} · Invited, awaiting acceptance</p></div><button type="button" disabled={!!removing || actionBusy} onClick={() => { void removeMember(member) }} className="min-h-9 rounded-lg px-2 text-xs text-rose-300 hover:bg-rose-400/10">Cancel invite</button></li>)}</ul></section>}
+      {isOrganizer && declinedMembers.length > 0 && <section className="mt-6 border-t border-white/[0.08] pt-5"><h3 className="font-semibold">Declined invitations · {declinedMembers.length}</h3><ul className="mt-3 space-y-2">{declinedMembers.map(member => <li key={member.profile_id} className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{member.display_name}</p><p className="truncate text-xs text-[#77808F]">@{member.username} · Declined</p></div><button type="button" disabled={!!removing || actionBusy} onClick={() => { void removeMember(member) }} className="min-h-9 rounded-lg px-2 text-xs text-rose-300 hover:bg-rose-400/10">Remove</button></li>)}</ul></section>}
       {isOrganizer && <form className="mt-6 border-t border-white/[0.08] pt-5" onSubmit={event => { event.preventDefault(); void addMembers() }}>
         <div className="mb-3 flex items-center gap-2"><UserPlus size={17} className="text-[#9BAEFF]" /><h3 className="font-semibold">Add members</h3></div>
         <label className="field-label">Usernames or wallet addresses<textarea className="janus-input min-h-24" required value={newMembers} onChange={event => setNewMembers(event.target.value)} placeholder={'@alice\n@bob\n0x1234…'} /><span className="block mt-2 text-xs text-[#A8B0BE]">New members receive an invitation in their JANUS inbox.</span></label>
