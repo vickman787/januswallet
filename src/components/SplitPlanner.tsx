@@ -154,7 +154,8 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
   }
 
   return <Dialog label="Create a split" onClose={onClose} busy={busy}>
-    <h2 className="display text-xl font-semibold mb-3">Create a split</h2>
+    <div className="dialog-kicker mb-2">SPLIT · DIRECT PAYMENT</div>
+    <h2 className="display text-2xl font-semibold mb-3">Create a split</h2>
     <p className="text-sm text-[#A8B0BE] mb-2">A verified JANUS username has the same payment function as its verified wallet address.</p>
     {onOpenDocs && <button type="button" onClick={onOpenDocs} className="mb-5 min-h-10 text-sm font-medium text-[#9BAEFF] underline">Split or Purchase? Read Docs</button>}
     <form className="space-y-4" onSubmit={event => { event.preventDefault(); void calculate() }}>

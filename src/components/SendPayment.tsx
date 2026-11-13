@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
-import { erc20Abi, type Hash } from 'viem'
+import { erc20Abi, formatUnits, type Hash } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, ExternalLink } from 'lucide-react'
+import { Camera, Check, ExternalLink } from 'lucide-react'
 import { buildTxExplorerUrl } from '../onchain-facts'
 import { parseUsdcInput, hasExpectedTransfer } from '../lib/payments'
 import { resolveRecipientInput } from '../lib/recipients'
 import { ARC_MAINNET_ID } from '../contracts'
 import Dialog from './Dialog'
+import RecipientScanner from './RecipientScanner'
 import { ARC_USDC_ADDRESS as usdcAddress } from '../lib/network'
 import { readPendingTransfer, savePendingTransfer, clearPendingTransfer } from '../lib/pending-transfer'
 
@@ -21,14 +22,17 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
   const { writeContractAsync } = useWriteContract()
   const queries = useQueryClient()
   const [recipient, setRecipient] = useState('')
+  const [scanning, setScanning] = useState(false)
   const [amount, setAmount] = useState('')
   const [saved] = useState(() => readPendingTransfer(address))
   const [stage, setStage] = useState<Stage>(saved ? 'unconfirmed' : 'form')
   const [transfer, setTransfer] = useState<Transfer | undefined>(saved ? { ...saved, amount: BigInt(saved.amount) } : undefined)
   const [hash, setHash] = useState<Hash | undefined>(saved?.hash)
   const [error, setError] = useState('')
+  const handleScannedRecipient = useCallback((scanned: `0x${string}`) => { setRecipient(scanned); setScanning(false); setError('') }, [])
   const [resolvedName, setResolvedName] = useState('')
   const [resolving, setResolving] = useState(false)
+  const [feeEstimate, setFeeEstimate] = useState<string | undefined>()
   const busy = stage === 'signing' || stage === 'confirming'
 
 
@@ -73,6 +77,16 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
       if (to.toLowerCase() === address.toLowerCase()) throw new Error('Choose a recipient other than your own wallet.')
       setResolvedName(resolved.username ? (resolved.displayName ? resolved.displayName + ' · ' : '') + resolved.username : '')
       setTransfer({ to, amount: raw, input: amount.trim(), account: address }); setStage('review')
+      setFeeEstimate(undefined)
+      if (usdcAddress) {
+        try {
+          const [gas, gasPrice] = await Promise.all([
+            client?.estimateContractGas({ address: usdcAddress, abi: erc20Abi, functionName: 'transfer', args: [to, raw], account: address }),
+            client?.getGasPrice(),
+          ])
+          if (gas !== undefined && gasPrice !== undefined) setFeeEstimate('≈ ' + formatUnits(gas * gasPrice, 6) + ' USDC')
+        } catch { /* The wallet shows the final fee before signing. */ }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Check the payment details.')
     } finally { setResolving(false) }
@@ -106,26 +120,37 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
   const accountChanged = transfer && address?.toLowerCase() !== transfer.account.toLowerCase()
   return (
     <Dialog label="Send USDC" onClose={onClose} busy={busy}>
-      <h2 className="display text-xl font-semibold mb-4">Send USDC</h2>
+      <div className="dialog-kicker">SEND · ARC MAINNET</div>
+      <h2 className="display text-2xl font-semibold mt-2">{stage === 'form' ? 'Send USDC' : stage === 'confirmed' ? 'Payment complete' : 'Review payment'}</h2>
+      <p className="mb-4 mt-1 text-sm text-[#A8B0BE]">Check the recipient and amount before signing.</p>
       {stage === 'form' ? <form onSubmit={event => { event.preventDefault(); void review() }} className="space-y-4">
-        <label className="field-label">Recipient address or username
+        <label className="field-label">Recipient
           <input value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off"
             spellCheck={false} placeholder="0x… or @username" className="janus-input mono" required />
         </label>
+        <button type="button" className="janus-secondary inline-flex items-center gap-2 text-sm" onClick={() => { setError(''); setScanning(true) }}><Camera size={16} /> Scan wallet QR</button>
+        {scanning && <RecipientScanner onScan={handleScannedRecipient} onCancel={() => setScanning(false)} />}
         <label className="field-label">Amount (USDC)
           <input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal"
             placeholder="0.00" className="janus-input" required />
         </label>
-        <p className="text-sm text-[#A8B0BE]">Usernames resolve only to wallets verified by JANUS.</p>
+        <p className="text-sm text-[#A8B0BE]">Send USDC to any verified recipient — @username or wallet address. Usernames resolve only to wallets verified by JANUS.</p>
         {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
         <div className="flex gap-3"><button type="button" className="janus-secondary flex-1" onClick={onClose}>Cancel</button>
           <button className="janus-primary flex-1" disabled={resolving} type="submit">{resolving ? 'Resolving…' : 'Review payment'}</button></div>
       </form> : <div className="space-y-4">
         {stage === 'confirmed' && <p role="status" className="flex gap-2 items-center text-green-400"><Check />Payment confirmed</p>}
-        <dl className="space-y-3 text-sm rounded-xl border border-white/10 p-4">
-          <div><dt className="text-[#A8B0BE]">Recipient</dt>{resolvedName && <dd className="mt-1">{resolvedName}</dd>}<dd className="mono break-all mt-1">{transfer?.to}</dd></div>
-          <div className="flex justify-between"><dt>Amount</dt><dd>{transfer?.input} USDC</dd></div>
-          <div className="flex justify-between"><dt>Network</dt><dd>Arc Mainnet</dd></div>
+        <dl className="rounded-xl border border-white/10 divide-y divide-white/[0.06]">
+          <div className="p-4">
+            <dt className="text-xs text-[#77808F]">Recipient</dt>
+            {resolvedName && <dd className="mt-1 flex flex-wrap items-center gap-2 font-medium">{resolvedName}
+              <span className="rounded-full border border-green-400/30 bg-green-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">Verified</span></dd>}
+            <dd className="mono mt-1 break-all text-[#C8CDD6]">{transfer?.to}</dd>
+          </div>
+          <div className="flex items-center justify-between p-4"><dt className="text-[#A8B0BE]">Amount</dt><dd className="tabnum font-semibold">{transfer?.input} USDC</dd></div>
+          <div className="flex items-center justify-between p-4"><dt className="text-[#A8B0BE]">Network</dt><dd>Arc Mainnet</dd></div>
+          <div className="flex items-center justify-between p-4"><dt className="text-[#A8B0BE]">Payment type</dt><dd>Direct transfer</dd></div>
+          <div className="flex items-center justify-between p-4"><dt className="text-[#A8B0BE]">Network fee</dt><dd className="tabnum">{feeEstimate ?? 'Shown by your wallet'}</dd></div>
         </dl>
         {stage === 'review' && <p className="text-sm text-[#A8B0BE]">Funds go directly to this recipient. This transfer cannot be cancelled or refunded by JANUS. Your wallet shows the network fee before approval.</p>}
         {accountChanged && <p role="alert" className="text-amber-300">Your account changed. Close this payment and review it again.</p>}
@@ -133,8 +158,8 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
         {busy && <p role="status">{stage === 'signing' ? 'Confirm in your wallet…' : 'Waiting for confirmation…'}</p>}
         {hash && <a className="inline-flex items-center gap-2 text-[#9BAEFF] underline py-3 break-all" href={buildTxExplorerUrl(ARC_MAINNET_ID, hash)} target="_blank" rel="noopener noreferrer">View transaction <ExternalLink size={14} /></a>}
         {stage === 'review' && <div className="flex gap-3">
-          <button className="janus-secondary flex-1" onClick={() => { setStage('form'); setError('') }}>Edit</button>
-          <button className="janus-primary flex-1" disabled={!!accountChanged} onClick={() => { void send() }}>Confirm payment</button>
+          <button className="janus-secondary flex-1" onClick={() => { setStage('form'); setError(''); setFeeEstimate(undefined) }}>Edit</button>
+          <button className="janus-primary flex-1" disabled={!!accountChanged} onClick={() => { void send() }}>Confirm & send</button>
         </div>}
         {stage === 'unconfirmed' && <p className="text-sm text-amber-300">A submitted payment needs confirmation. Check it before sending another payment.</p>}
         {stage === 'unconfirmed' && hash && <button className="janus-primary w-full" onClick={() => { void confirm(hash) }}>Check confirmation</button>}

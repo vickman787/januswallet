@@ -319,13 +319,13 @@ export function createHandler(deps: Dependencies) {
         return reply(200, { splits: found.flatMap(item => item ? [{
           split: {
             id: item.split.id, kind: item.split.kind, title: item.split.title,
-            description: item.split.description, total_raw: item.split.total_raw,
+            description: item.split.description, total_raw: item.split.total_raw, recipient_address: item.split.recipient_address,
             share_count: item.split.share_count, status: item.split.status,
             created_at: item.split.created_at,
           },
           role: item.split.organizer_id === profile.id ? 'organizer' : 'participant',
           your_share_index: item.shares.find(entry => entry.profile_id === profile.id)?.share_index ?? null,
-          shares: item.shares.map(entry => ({ share_index: entry.share_index, amount_raw: entry.amount_raw, status: entry.status })),
+          shares: item.shares.map(entry => ({ share_index: entry.share_index, amount_raw: entry.amount_raw, status: entry.status, payer_address: entry.payer_address, confirmed_tx_hash: entry.confirmed_tx_hash })),
         }] : []) })
       }
       if (path === '/api/splits' && req.method === 'POST') {

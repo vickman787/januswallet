@@ -309,7 +309,8 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
   const available = purchase && address ? purchaseActionAvailability(purchase, address, contribution, claimed) : undefined
   const locked = busy || !!pending
   return <Dialog label="Shared purchases" onClose={onClose} busy={busy}>
-    <h2 className="display text-xl font-semibold mb-2">Shared purchases</h2>
+    <div className="dialog-kicker mb-2">PURCHASE · ON-CHAIN ESCROW</div>
+    <h2 className="display text-2xl font-semibold mb-2">Shared purchases</h2>
     {onOpenDocs && <button type="button" onClick={onOpenDocs} className="min-h-10 text-sm font-medium text-[#9BAEFF] underline">Split or Purchase? Read Docs</button>}
     {!contract ? <p className="text-sm text-[#A8B0BE]">Purchases open after the reviewed JanusPurchase deployment is configured. No funds can be collected here yet.</p> : <div className="space-y-5 text-sm">
       <p className="text-[#A8B0BE]">Escrow uses {networkName} USDC. The organizer controls release after full funding, before the release deadline. Contributors claim their own refunds after cancellation or expiry.</p>
@@ -330,7 +331,8 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
       </section>
       {loading && <p role="status">Loading purchase…</p>}
       {purchase && id && <section className="space-y-3 rounded-xl border border-white/10 p-4">
-        <h3 className="font-semibold">Purchase on Arc</h3>
+        <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Purchase on Arc</h3><span className="purchase-status-pill">{statusNames[purchase.status] ?? 'Unknown'}</span></div>
+        <div className="purchase-progress" role="progressbar" aria-label="Purchase funding progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={purchase.target > 0n ? Math.min(100, Number(purchase.funded * 100n / purchase.target)) : 0}><span style={{ width: `${purchase.target > 0n ? Math.min(100, Number(purchase.funded * 100n / purchase.target)) : 0}%` }} /></div>
         <p className="mono text-xs break-all">{id}</p>
         <dl className="space-y-2">
           <div className="flex justify-between gap-3"><dt>Status</dt><dd>{statusNames[purchase.status] ?? 'Unknown'}</dd></div>
@@ -349,7 +351,7 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
         {available?.release && <button className="janus-primary w-full" disabled={locked} onClick={() => transition('release', 'Release funds', 'Send ' + formatUnits(purchase.funded, 6) + ' USDC to ' + purchase.recipient + '. This ends escrow and cannot be refunded by JANUS.')}>Review release</button>}
         {available?.cancel && <button className="janus-secondary w-full" disabled={locked} onClick={() => transition('cancel', 'Cancel purchase', 'Each contributor must claim their own refund. Cancellation cannot be undone.')}>Review cancellation</button>}
         {available?.expire && <button className="janus-secondary w-full" disabled={locked} onClick={() => transition('markExpired', 'Mark expired', 'Each contributor must claim their own refund.')}>Review expiry</button>}
-        {available?.refund && <button className="janus-primary w-full" disabled={locked} onClick={() => transition('claimRefund', 'Claim refund', 'Claim your ' + formatUnits(contribution, 6) + ' USDC contribution back to this wallet.')}>Review refund</button>}
+        {available?.refund && <div className="purchase-refund-panel"><p className="font-semibold">Your refund is ready</p><p className="text-xs text-[#A8B0BE]">This purchase ended without settlement. Your {formatUnits(contribution, 6)} USDC remains in escrow until you claim it back to this wallet.</p><button className="janus-primary w-full" disabled={locked} onClick={() => transition('claimRefund', 'Claim refund', 'Claim your ' + formatUnits(contribution, 6) + ' USDC contribution back to this wallet.')}>Review refund</button></div>}
         <button className="janus-secondary w-full" disabled={locked} onClick={() => { void refresh(id) }}>Refresh on-chain state</button>
       </section>}
       </>}

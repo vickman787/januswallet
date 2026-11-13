@@ -20,7 +20,7 @@ export default function Header({ minimal = false, onOpenAccount, onHome }: { min
   const label = account.data?.profile?.username ? '@' + account.data.profile.username : 'Account'
 
   return <header className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-4"
-    style={{ height: '60px', background: 'rgba(11,13,18,0.92)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+    style={{ height: '60px', background: 'rgba(9,13,21,0.94)', backdropFilter: 'blur(20px)', borderBottom: '1px solid #293341' }}>
     <button type="button" onClick={onHome} aria-label="Go to homepage" className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4D6BFF]"><JanusWordmark size={28} /></button>
     {!minimal && <button onClick={onOpenAccount} aria-label="Account settings"
       className="flex max-w-[55vw] items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border border-[#4D6BFF]/30 bg-[#4D6BFF]/10 text-[#C8CDD6] min-h-9 focus-visible:ring-2 focus-visible:ring-[#4D6BFF]">

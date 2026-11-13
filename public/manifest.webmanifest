@@ -1,0 +1,25 @@
+{
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "start_url": "/",
+  "id": "/",
+  "description": "Send Arc USDC, split bills, and fund shared purchases.",
+  "name": "JANUS Wallet",
+  "short_name": "JANUS",
+  "theme_color": "#0b0d12",
+  "scope": "/",
+  "icons": [
+    {
+      "type": "image/png",
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "type": "image/png",
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ]
+}

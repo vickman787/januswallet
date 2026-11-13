@@ -43,7 +43,8 @@ function purchaseFromHash(): { chainId: 5042 | 5042002; id: Hash } | undefined {
 function AccountApp() {
   const auth = useJanusAuth()
   const { authenticated, ready } = auth
-  const [screen, setScreen] = useState<Screen>('wallet')
+  const [screen, setScreen] = useState<Screen>('home')
+  const [sendIntent, setSendIntent] = useState(0)
   const [splitId, setSplitId] = useState(splitFromHash)
   const [purchaseRoute, setPurchaseRoute] = useState(purchaseFromHash)
   const inbox = useQuery({
@@ -65,6 +66,11 @@ function AccountApp() {
     setSplitId(undefined)
     setScreen(next)
   }
+  function changeScreen(next: Screen) {
+    if (next === 'send') { setScreen('home'); setSendIntent(count => count + 1); return }
+    setSendIntent(0)
+    setScreen(next)
+  }
 
   if (!ready) return <AppLoadingScreen />
   if (!authenticated) return <LandingScreen />
@@ -80,14 +86,14 @@ function AccountApp() {
   }} />
   const purchaseTest = import.meta.env.DEV &&
     new URLSearchParams(window.location.search).get('test-contract') === 'janus-purchase'
-  if (purchaseRoute) return <div className="min-h-dvh bg-[#0B0D12]">
+  if (purchaseRoute) return <div className="min-h-dvh bg-[#090d15]">
     <SharedPurchase network={purchaseRoute.chainId === 5042002 ? 'testnet' : 'mainnet'} initialPurchaseId={purchaseRoute.id}
       onClose={() => { history.replaceState(null, '', window.location.pathname + window.location.search); setPurchaseRoute(undefined) }} />
   </div>
-  if (splitId) return <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>
+  if (splitId) return <div className="min-h-dvh flex flex-col" style={{ background: '#090d15' }}>
     <Header onHome={() => leaveSplit('home')} onOpenAccount={() => leaveSplit('settings')} />
     <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px' }}>
-      <div className="max-w-md mx-auto w-full"><SplitPaymentScreen id={splitId} returnTo={screen} onClose={() => leaveSplit(screen)} onCompletedClose={() => leaveSplit('wallet')} /></div>
+      <div className="max-w-[480px] mx-auto w-full"><SplitPaymentScreen id={splitId} returnTo={screen} onClose={() => leaveSplit(screen)} onCompletedClose={() => leaveSplit('home')} /></div>
     </main>
   </div>
 
@@ -95,25 +101,24 @@ function AccountApp() {
   const unreadPurchaseNotices = purchaseNotices.filter(item => !item.read_at)
   const unreadGroupJoinNotices = (inbox.data?.notifications ?? []).filter(item => item.kind === 'group_joined' && !item.read_at)
   const noticePurchaseIds = new Set(purchaseNotices.map(item => item.resource_id).filter(Boolean))
-  const inboxCount = (inbox.data?.splits.length ?? 0) + (inbox.data?.groups.length ?? 0) +
-    (inbox.data?.purchases.filter(item => item.status === 'invited' && !item.read_at && !noticePurchaseIds.has(item.purchase.id)).length ?? 0) +
+  const inboxCount = (inbox.data?.splits?.length ?? 0) + (inbox.data?.groups?.length ?? 0) +
+    (inbox.data?.purchases?.filter(item => item.status === 'invited' && !item.read_at && !noticePurchaseIds.has(item.purchase.id)).length ?? 0) +
     unreadPurchaseNotices.length + unreadGroupJoinNotices.length
 
   return (
-    <div className="min-h-dvh flex flex-col" style={{ background: '#0B0D12' }}>
-      <Header minimal={screen === 'home'} onHome={() => setScreen('home')} onOpenAccount={() => setScreen('settings')} />
-      <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px', paddingBottom: screen === 'home' ? 0 : 'calc(104px + env(safe-area-inset-bottom))' }}>
-        <div className={screen === 'home' ? 'max-w-3xl mx-auto w-full' : 'max-w-md mx-auto w-full'}>
-          {screen === 'home' && <LandingScreen inApp onOpenWallet={() => setScreen('wallet')} />}
-          {screen === 'wallet' && <WalletScreen onViewActivity={() => setScreen('activity')} onOpenDocs={() => setScreen('docs')} purchaseNetwork={purchaseTest ? 'testnet' : 'mainnet'} initialPurchaseOpen={purchaseTest} />}
+    <div className="min-h-dvh flex flex-col" style={{ background: '#090d15' }}>
+      <Header onHome={() => changeScreen('home')} onOpenAccount={() => changeScreen('settings')} />
+      <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px', paddingBottom: 'calc(104px + env(safe-area-inset-bottom))' }}>
+        <div className="max-w-[480px] mx-auto w-full">
+          {screen === 'home' && <WalletScreen key={'wallet-' + sendIntent} initialSendOpen={sendIntent > 0} onViewActivity={() => changeScreen('activity')} onOpenDocs={() => changeScreen('docs')} purchaseNetwork={purchaseTest ? 'testnet' : 'mainnet'} initialPurchaseOpen={purchaseTest} />}
           {screen === 'activity' && <ActivityScreen />}
           {screen === 'inbox' && <InboxScreen />}
           {screen === 'groups' && <GroupsScreen />}
           {screen === 'settings' && <SettingsScreen />}
-          {screen === 'docs' && <DocsScreen onBack={() => setScreen('wallet')} />}
+          {screen === 'docs' && <DocsScreen onBack={() => changeScreen('home')} />}
         </div>
       </main>
-      {screen !== 'home' && <BottomNav active={screen} onChange={setScreen} inboxCount={inboxCount} />}
+      <BottomNav active={screen === 'send' ? 'send' : screen} onChange={changeScreen} inboxCount={inboxCount} />
     </div>
   )
 }
