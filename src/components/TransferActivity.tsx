@@ -19,6 +19,13 @@ type RecordedSplit = {
 type RecordedSplits = { splits: RecordedSplit[] }
 type PurchaseTransaction = { to: Address | null; input: `0x${string}` }
 
+function transactionTime(timestamp?: string) {
+  if (!timestamp) return 'Time unavailable'
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime())) return 'Time unavailable'
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
+}
+
 function shortAddress(address: string) {
   return address.slice(0, 6) + '…' + address.slice(-4)
 }
@@ -123,7 +130,10 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
             <span className="truncate text-sm font-medium">{entry.direction === 'self' ? 'To your wallet' : received ? 'Received' : 'Sent'}</span>
             <span className={`tabnum shrink-0 text-sm font-semibold ${received ? 'text-green-400' : ''}`}>{sign}{formatUnits(entry.amount, 6)} <span className="font-normal text-[#77808F]">USDC</span></span>
           </div>
-          <span className={`transfer-kind-badge ${kind !== 'transfer' ? 'transfer-kind-verified' : ''}`}>{transferKindLabel[kind]}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={`transfer-kind-badge ${kind !== 'transfer' ? 'transfer-kind-verified' : ''}`}>{transferKindLabel[kind]}</span>
+            <time dateTime={entry.timestamp} className="text-[11px] text-[#8B99AA]">{transactionTime(entry.timestamp)}</time>
+          </div>
           <div className="mt-2 flex items-center justify-between gap-3">
             <button type="button" className="min-w-0 truncate text-left text-xs text-[#C8CDD6] underline decoration-white/20 underline-offset-4"
               aria-expanded={isRevealed} onClick={() => setRevealed(current => ({ ...current, [entry.id]: !current[entry.id] }))}>

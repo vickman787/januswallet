@@ -74,7 +74,7 @@ export default function RecipientScanner({ onScan, onCancel }: Props) {
     <div className="flex items-center justify-between gap-2 mb-3"><span className="inline-flex items-center gap-2 text-sm font-medium"><Camera size={16} /> Scan wallet QR</span>
       <button type="button" onClick={onCancel} className="p-2 rounded-lg text-[#A8B0BE]" aria-label="Close camera"><X size={17} /></button></div>
     <video ref={videoRef} autoPlay muted playsInline className="w-full aspect-square max-h-72 rounded-lg bg-[#0B0D12] object-cover" aria-label="Camera preview" />
-    <p className="mt-2 text-xs text-[#A8B0BE]">Point your camera at a JANUS receive QR. The address will appear in the Send form for review.</p>
+    <p className="mt-2 text-xs text-[#A8B0BE]">Point your camera at a JANUS receive QR. The exact address will appear in Send, with a verified JANUS username when available.</p>
     {error && <p role="alert" className="mt-2 text-xs text-amber-300">{error}</p>}
   </section>
 }

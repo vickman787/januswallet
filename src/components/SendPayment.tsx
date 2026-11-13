@@ -1,11 +1,12 @@
 import { useCallback, useState } from 'react'
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
-import { erc20Abi, formatUnits, type Hash } from 'viem'
+import { erc20Abi, formatUnits, isAddress, type Hash } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
 import { Camera, Check, ExternalLink } from 'lucide-react'
 import { buildTxExplorerUrl } from '../onchain-facts'
 import { parseUsdcInput, hasExpectedTransfer } from '../lib/payments'
 import { resolveRecipientInput } from '../lib/recipients'
+import { useWalletIdentity } from '../hooks/useWalletIdentity'
 import { ARC_MAINNET_ID } from '../contracts'
 import Dialog from './Dialog'
 import RecipientScanner from './RecipientScanner'
@@ -22,6 +23,8 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
   const { writeContractAsync } = useWriteContract()
   const queries = useQueryClient()
   const [recipient, setRecipient] = useState('')
+  const recipientIdentity = useWalletIdentity(isAddress(recipient.trim()) ? recipient.trim() : undefined)
+  const verifiedWallet = recipientIdentity.data?.address.toLowerCase() === recipient.trim().toLowerCase() ? recipientIdentity.data : null
   const [scanning, setScanning] = useState(false)
   const [amount, setAmount] = useState('')
   const [saved] = useState(() => readPendingTransfer(address))
@@ -118,6 +121,9 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
   }
 
   const accountChanged = transfer && address?.toLowerCase() !== transfer.account.toLowerCase()
+  const verifiedAddressName = transfer && verifiedWallet?.address.toLowerCase() === transfer.to.toLowerCase()
+    ? (verifiedWallet.displayName ? verifiedWallet.displayName + ' · ' : '') + '@' + verifiedWallet.username : ''
+  const displayRecipientName = resolvedName || verifiedAddressName
   return (
     <Dialog label="Send USDC" onClose={onClose} busy={busy}>
       <div className="dialog-kicker">SEND · ARC MAINNET</div>
@@ -128,6 +134,11 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
           <input value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off"
             spellCheck={false} placeholder="0x… or @username" className="janus-input mono" required />
         </label>
+        {isAddress(recipient.trim()) && recipientIdentity.isPending && <p role="status" className="text-xs text-[#A8B0BE]">Checking for a JANUS username…</p>}
+        {verifiedWallet?.username && <div className="rounded-xl border border-green-400/25 bg-green-400/5 p-3 text-sm">
+          <p className="font-semibold text-green-300">Verified JANUS account: @{verifiedWallet.username}</p>
+          <p className="mt-1 text-xs text-[#A8B0BE]">Payment will use the exact wallet address shown above.</p>
+        </div>}
         <button type="button" className="janus-secondary inline-flex items-center gap-2 text-sm" onClick={() => { setError(''); setScanning(true) }}><Camera size={16} /> Scan wallet QR</button>
         {scanning && <RecipientScanner onScan={handleScannedRecipient} onCancel={() => setScanning(false)} />}
         <label className="field-label">Amount (USDC)
@@ -143,7 +154,7 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
         <dl className="rounded-xl border border-white/10 divide-y divide-white/[0.06]">
           <div className="p-4">
             <dt className="text-xs text-[#77808F]">Recipient</dt>
-            {resolvedName && <dd className="mt-1 flex flex-wrap items-center gap-2 font-medium">{resolvedName}
+            {displayRecipientName && <dd className="mt-1 flex flex-wrap items-center gap-2 font-medium">{displayRecipientName}
               <span className="rounded-full border border-green-400/30 bg-green-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-400">Verified</span></dd>}
             <dd className="mono mt-1 break-all text-[#C8CDD6]">{transfer?.to}</dd>
           </div>

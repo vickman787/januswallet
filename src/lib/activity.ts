@@ -9,6 +9,7 @@ export interface TransferEntry {
   to: Address
   amount: bigint
   direction: 'sent' | 'received' | 'self'
+  timestamp?: string
 }
 
 export function mergeTransfers(entries: TransferEntry[]): TransferEntry[] {
@@ -96,6 +97,7 @@ export async function loadExplorerTransfers(wallet: Address, signal?: AbortSigna
         to,
         amount: BigInt(amount),
         direction: fromWallet && toWallet ? 'self' : fromWallet ? 'sent' : 'received',
+        timestamp: typeof row.timestamp === 'string' && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined,
       })
     }
     if (payload.next_page_params === null || payload.next_page_params === undefined) break
