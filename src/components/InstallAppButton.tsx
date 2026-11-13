@@ -7,19 +7,19 @@ type InstallPromptEvent = Event & {
 }
 
 let pendingPrompt: InstallPromptEvent | null = null
-let installed = false
+let installStarted = false
 const subscribers = new Set<() => void>()
 const notify = () => subscribers.forEach(callback => callback())
 
 if (typeof window !== 'undefined') {
-  installed = window.matchMedia('(display-mode: standalone)').matches
   window.addEventListener('beforeinstallprompt', event => {
     event.preventDefault()
     pendingPrompt = event as InstallPromptEvent
     notify()
   })
+  // On Android this fires when the dialog is accepted, before WebAPK installation finishes.
   window.addEventListener('appinstalled', () => {
-    installed = true
+    installStarted = true
     pendingPrompt = null
     notify()
   })
@@ -27,20 +27,22 @@ if (typeof window !== 'undefined') {
 
 export default function InstallAppButton({ compact = false }: { compact?: boolean }) {
   const [canPrompt, setCanPrompt] = useState(Boolean(pendingPrompt))
-  const [isInstalled, setIsInstalled] = useState(installed)
+  const [installationStarted, setInstallationStarted] = useState(installStarted)
   const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => {
     const update = () => {
       setCanPrompt(Boolean(pendingPrompt))
-      setIsInstalled(installed)
+      setInstallationStarted(installStarted)
     }
     subscribers.add(update)
     update()
     return () => { subscribers.delete(update) }
   }, [])
 
-  if (isInstalled) return compact ? null : <p className="text-xs text-[#A8B0BE]">JANUS is already installed on this device.</p>
+  if (window.matchMedia('(display-mode: standalone)').matches) {
+    return compact ? null : <p className="text-xs text-[#A8B0BE]">JANUS is open from your home screen.</p>
+  }
 
   const install = async () => {
     if (!pendingPrompt) {
@@ -53,7 +55,11 @@ export default function InstallAppButton({ compact = false }: { compact?: boolea
     try {
       await prompt.prompt()
       const choice = await prompt.userChoice
-      if (choice.outcome === 'dismissed') setShowHelp(true)
+      setShowHelp(true)
+      if (choice.outcome === 'accepted') {
+        installStarted = true
+        setInstallationStarted(true)
+      }
     } catch {
       setShowHelp(true)
     }
@@ -61,11 +67,13 @@ export default function InstallAppButton({ compact = false }: { compact?: boolea
 
   const isAndroid = /Android/i.test(navigator.userAgent)
   const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent)
-  const instructions = isIOS
-    ? 'Open januswallet.xyz in Safari, tap Share, then Add to Home Screen.'
-    : isAndroid
-      ? 'In Chrome, tap ⋮ at the top right, then Install app or Install and create shortcut. If JANUS is already installed, check your app drawer.'
-      : 'Open your browser menu and choose Install JANUS or Create shortcut.'
+  const instructions = installationStarted && isAndroid
+    ? 'Chrome accepted the install request, but Android may still be creating the app. Check your home screen and app drawer. If it stays stuck, try adding a shortcut from another browser.'
+    : isIOS
+      ? 'Open januswallet.xyz in Safari, tap Share, then Add to Home Screen.'
+      : isAndroid
+        ? 'In Chrome, tap ⋮ at the top right, then Install app or Install and create shortcut. If installation stalls, try adding a shortcut from another browser.'
+        : 'Open your browser menu and choose Install JANUS or Create shortcut.'
 
   return (
     <div className={compact ? 'flex flex-col items-center gap-2' : 'flex flex-col gap-2'}>
