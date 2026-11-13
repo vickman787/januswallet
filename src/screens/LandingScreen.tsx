@@ -2,6 +2,7 @@ import { useJanusAuth } from '../auth/AccountProvider'
 
 import { ArrowRight, Shield, Users, Zap, RotateCcw } from 'lucide-react'
 import { JanusSymbol, JanusWordmark } from '../components/JanusLogo'
+import InstallAppButton from '../components/InstallAppButton'
 
 const features = [
   {
@@ -88,6 +89,7 @@ export default function LandingScreen({ inApp = false, onOpenWallet }: { inApp?:
           {inApp ? 'Open wallet' : auth.ready ? 'Get started' : 'Preparing sign in…'}<ArrowRight size={18} />
         </button>
         {!inApp && !auth.configured && <p role="status" className="mt-3 text-sm text-[#A8B0BE]">Sign in is temporarily unavailable.</p>}
+        {!inApp && <div className="mt-4"><InstallAppButton compact /></div>}
       </section>
 
       {/* How it works */}

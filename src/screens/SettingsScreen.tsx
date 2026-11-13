@@ -1,5 +1,6 @@
 import AccountPanel from '../auth/AccountPanel'
 import CreateWalletActions from '../components/CreateWalletActions'
+import InstallAppButton from '../components/InstallAppButton'
 import { useAccount } from 'wagmi'
 import { useJanusAuth } from '../auth/AccountProvider'
 import { LogOut, User, Shield, Bell, HelpCircle, ExternalLink, Copy, Check } from 'lucide-react'
@@ -90,6 +91,12 @@ export default function SettingsScreen() {
             <CreateWalletActions />
           </div>
         )}
+      </div>
+
+      <div className="mx-4 mb-4 rounded-2xl p-4" style={{ background: 'rgba(77,107,255,0.06)', border: '1px solid rgba(77,107,255,0.18)' }}>
+        <h3 className="mb-1 text-sm font-semibold text-[#F1F3F2]">JANUS on your home screen</h3>
+        <p className="mb-3 text-xs text-[#A8B0BE]">Open the wallet directly from your phone, like an app.</p>
+        <InstallAppButton />
       </div>
 
       {address && <div className="mx-4 mb-4 space-y-3">
