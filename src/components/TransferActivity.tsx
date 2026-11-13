@@ -84,7 +84,7 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
   const profileByAddress = new Map((identities.data?.profiles ?? []).map(profile => [profile.address.toLowerCase(), profile]))
   if (!address) return <p className="text-sm text-[#A8B0BE]">Connect your wallet to view activity.</p>
   const filtered = activity.entries.filter(entry => filter === 'all' || entry.direction === filter)
-  const entries = compact ? filtered.slice(0, 3) : filtered
+  const entries = compact ? filtered.slice(0, 7) : filtered
 
   return <div className="space-y-3">
     <div className="flex items-center gap-2 flex-wrap">
