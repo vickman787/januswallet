@@ -44,6 +44,7 @@ function AccountApp() {
   const auth = useJanusAuth()
   const { authenticated, ready } = auth
   const [screen, setScreen] = useState<Screen>('home')
+  const [showLanding, setShowLanding] = useState(false)
   const [sendIntent, setSendIntent] = useState(0)
   const [splitId, setSplitId] = useState(splitFromHash)
   const [purchaseRoute, setPurchaseRoute] = useState(purchaseFromHash)
@@ -66,6 +67,13 @@ function AccountApp() {
     setSplitId(undefined)
     setScreen(next)
   }
+  function openLanding() {
+    history.replaceState(null, '', window.location.pathname + window.location.search)
+    setSplitId(undefined)
+    setPurchaseRoute(undefined)
+    setSendIntent(0)
+    setShowLanding(true)
+  }
   function changeScreen(next: Screen) {
     if (next === 'send') { setScreen('home'); setSendIntent(count => count + 1); return }
     setSendIntent(0)
@@ -86,12 +94,13 @@ function AccountApp() {
   }} />
   const purchaseTest = import.meta.env.DEV &&
     new URLSearchParams(window.location.search).get('test-contract') === 'janus-purchase'
+  if (showLanding) return <LandingScreen inApp onOpenWallet={() => { setShowLanding(false); changeScreen('home') }} />
   if (purchaseRoute) return <div className="min-h-dvh bg-[#090d15]">
     <SharedPurchase network={purchaseRoute.chainId === 5042002 ? 'testnet' : 'mainnet'} initialPurchaseId={purchaseRoute.id}
       onClose={() => { history.replaceState(null, '', window.location.pathname + window.location.search); setPurchaseRoute(undefined) }} />
   </div>
   if (splitId) return <div className="min-h-dvh flex flex-col" style={{ background: '#090d15' }}>
-    <Header onHome={() => leaveSplit('home')} onOpenAccount={() => leaveSplit('settings')} />
+    <Header onHome={openLanding} onOpenAccount={() => leaveSplit('settings')} />
     <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px' }}>
       <div className="max-w-[480px] mx-auto w-full"><SplitPaymentScreen id={splitId} returnTo={screen} onClose={() => leaveSplit(screen)} onCompletedClose={() => leaveSplit('home')} /></div>
     </main>
@@ -107,7 +116,7 @@ function AccountApp() {
 
   return (
     <div className="min-h-dvh flex flex-col" style={{ background: '#090d15' }}>
-      <Header onHome={() => changeScreen('home')} onOpenAccount={() => changeScreen('settings')} />
+      <Header onHome={openLanding} onOpenAccount={() => changeScreen('settings')} />
       <main className="flex-1 overflow-y-auto" style={{ paddingTop: '60px', paddingBottom: 'calc(104px + env(safe-area-inset-bottom))' }}>
         <div className="max-w-[480px] mx-auto w-full">
           {screen === 'home' && <WalletScreen key={'wallet-' + sendIntent} initialSendOpen={sendIntent > 0} onViewActivity={() => changeScreen('activity')} onOpenDocs={() => changeScreen('docs')} purchaseNetwork={purchaseTest ? 'testnet' : 'mainnet'} initialPurchaseOpen={purchaseTest} />}
