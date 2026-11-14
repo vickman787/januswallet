@@ -50,10 +50,22 @@ export default function PushNotifications() {
       if (subscription && owner !== auth.subject) {
         await subscription.unsubscribe()
         localStorage.removeItem(ownerKey)
-      } else if (active) {
-        setEnabled(Boolean(subscription && owner === auth.subject))
+      } else if (subscription && owner === auth.subject) {
+        // Restore an opted-in device if browser storage outlives the server record.
+        await janusApi({ token: auth.token }, 'push/subscribe', {
+          method: 'POST', body: { subscription: subscription.toJSON() },
+        })
+        if (active) setEnabled(true)
+      } else {
+        localStorage.removeItem(ownerKey)
+        if (active) setEnabled(false)
       }
-    })().catch(() => { if (active) setEnabled(false) })
+    })().catch(() => {
+      if (active) {
+        setEnabled(false)
+        setMessage('Alerts could not be connected to your account. Tap Enable alerts to retry.')
+      }
+    })
     void janusApi<{ publicKey: string }>({ token: auth.token }, 'push/config')
       .then(config => { if (active) setPublicKey(config.publicKey) })
       .catch(() => { if (active) setPublicKey('') })
@@ -105,7 +117,7 @@ export default function PushNotifications() {
       </span>
       <div className="min-w-0 flex-1">
         <h3 className="text-sm font-semibold text-[#F1F3F2]">Phone & browser alerts</h3>
-        <p className="mt-1 text-xs text-[#A8B0BE]">Get invitations and group updates on this device.</p>
+        <p className="mt-1 text-xs text-[#A8B0BE]">Get invitations and group updates on this device. Signing out turns alerts off; keep the invited account signed in when testing from another browser or phone.</p>
       </div>
     </div>
     {supported() && (enabled || publicKey) ? <button type="button" className="janus-secondary mt-4 w-full" disabled={working}
