@@ -6,7 +6,7 @@ export type PushSubscriptionInput = {
   keys: { p256dh: string; auth: string }
 }
 type PushRow = { id: string; profile_id: string; endpoint: string; p256dh: string; auth: string }
-export type PushMessage = { eventKey: string; title: string; body: string; url: string }
+export type PushMessage = { eventKey: string; title: string; body: string; url: string; ttlSeconds?: number }
 
 const pushHosts = new Set(['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com'])
 
@@ -97,7 +97,7 @@ export function createPushService(databaseUrl: string, databaseKey: string, publ
             endpoint: subscription.endpoint,
             keys: { p256dh: subscription.p256dh, auth: subscription.auth },
           }, JSON.stringify({ title: message.title, body: message.body, url: destination.href }), {
-            TTL: 24 * 60 * 60, timeout: 5000,
+            TTL: message.ttlSeconds ?? 24 * 60 * 60, timeout: 5000,
           })
         } catch (error) {
           const status = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : null

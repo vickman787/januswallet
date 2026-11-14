@@ -11,6 +11,15 @@ JANUS supports optional browser and phone alerts for new group invitations, acce
 
 The server accepts subscriptions only for authenticated profiles and only from recognized browser push endpoints. It stores the browser endpoint and encryption keys in Supabase, with access limited to the server role. Signing out from Settings unsubscribes this browser. Turning off alerts also unsubscribes it. A stale subscription is removed after the push provider reports it gone.
 
-## Deadline reminders
+## Background purchase deadline reminders
 
-Purchase deadline notices currently appear when Inbox refreshes. This release does not send background deadline push reminders. Those need a scheduled server job plus verified purchase state checks, and scheduling frequency depends on the deployment plan. Do not promise an exact-time reminder until that job is deployed and tested.
+The background worker checks Arc purchase state before sending an alert. It reminds invited participants who have not contributed when the funding deadline enters the 24-hour and one-hour windows. Once fully funded, it reminds the organizer when the release deadline enters those windows. It never sends a reminder after the relevant deadline, after settlement, or after a participant has contributed. Push delivery is best effort, and the scheduler runs every five minutes, so alerts are approximate rather than exact-time guarantees. Browser notification permission and an active subscription are required.
+
+To activate the worker:
+
+1. Apply `supabase/migrations/202611140002_purchase_deadline_reminders.sql` in the same Supabase project as JANUS. The worker backfills purchase deadlines from Arc in small batches.
+2. Configure a high-entropy `CRON_SECRET` as a **server-only** Vercel production environment variable. The value must match the secret stored in Supabase Vault. Never put it in a `VITE_` variable or commit it. The local machine's ignored `.env.server` and `supabase/purchase_deadline_cron_setup.local.sql` contain the prepared secret.
+3. In the Supabase dashboard, enable the `pg_cron` and `pg_net` extensions. Run the ignored `supabase/purchase_deadline_cron_setup.local.sql` in SQL Editor. It stores the secret in Vault and schedules an authenticated POST to the JANUS API every five minutes. The checked-in `supabase/purchase_deadline_cron_setup.sql` is a template without the secret.
+4. Deploy the API with the migration in place. Check Supabase Cron run history and the Vercel function logs, then test with a short-lived test purchase and an opted-in second browser. A reminder only sends if on-chain state says the purchase still needs action.
+
+The scheduled endpoint is `POST /api/cron/purchase-reminders`. It accepts only the configured bearer secret. Push delivery keys prevent repeats when the job runs more than once in the same window. Vercel Hobby cron alone cannot provide a reliable five-minute schedule, which is why Supabase runs the timer.

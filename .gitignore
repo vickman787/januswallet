@@ -40,3 +40,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+# Local SQL contains the scheduler authentication secret
+supabase/purchase_deadline_cron_setup.local.sql
