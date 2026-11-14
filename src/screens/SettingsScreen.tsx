@@ -1,9 +1,10 @@
 import AccountPanel from '../auth/AccountPanel'
 import CreateWalletActions from '../components/CreateWalletActions'
 import InstallAppButton from '../components/InstallAppButton'
+import PushNotifications, { disablePush } from '../components/PushNotifications'
 import { useAccount } from 'wagmi'
 import { useJanusAuth } from '../auth/AccountProvider'
-import { LogOut, User, Shield, Bell, HelpCircle, ExternalLink, Copy, Check } from 'lucide-react'
+import { LogOut, User, Shield, HelpCircle, ExternalLink, Copy, Check } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { buildAddressExplorerUrl } from '../onchain-facts'
@@ -28,7 +29,6 @@ export default function SettingsScreen() {
     {
       title: 'Account',
       items: [
-        { label: 'Notifications',      Icon: Bell, action: () => toast.info('Notifications — coming soon') },
         { label: 'Security',           Icon: Shield, action: () => toast.info('Security — coming soon') },
       ],
     },
@@ -99,6 +99,8 @@ export default function SettingsScreen() {
         <InstallAppButton />
       </div>
 
+      <PushNotifications />
+
       {address && <div className="mx-4 mb-4 space-y-3">
         <button onClick={auth.connectWallet} disabled={!auth.ready} className="janus-secondary w-full disabled:opacity-50">Connect another wallet</button>
         {auth.wallets.length > 1 && <label className="block text-sm text-[#A8B0BE]">Active payment wallet
@@ -138,7 +140,7 @@ export default function SettingsScreen() {
       {auth.authenticated && (
         <div className="mx-4">
           <button
-            disabled={signingOut} onClick={() => { setSigningOut(true); void auth.logout().catch(() => toast.error('Sign out failed. Try again.')).finally(() => setSigningOut(false)) }}
+            disabled={signingOut} onClick={() => { setSigningOut(true); void disablePush(auth).catch(() => {}).then(() => auth.logout()).catch(() => toast.error('Sign out failed. Try again.')).finally(() => setSigningOut(false)) }}
             className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-sm font-medium transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#EF4444]"
             style={{ background: 'rgba(239,68,68,0.06)', color: '#EF4444', border: '1px solid rgba(239,68,68,0.15)' }}
           >

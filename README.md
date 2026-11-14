@@ -64,6 +64,8 @@ If the organizer cancels, or an underfunded or unreleased purchase becomes eligi
 
 Groups let an organizer invite verified JANUS accounts and reuse accepted members when creating a split or purchase. Members can accept or decline invitations; accepted members can leave, and the organizer can add or remove members. Editing a group does not change an existing payment or on-chain purchase. Username lookup and invitations depend on the JANUS API being available; the payment wallet and escrow transactions are on Arc.
 
+For optional device alerts, see [Web push setup](docs/WEB-PUSH.md).
+
 ## Architecture
 
 JANUS separates social coordination from money movement. The API stores profiles, verified username-to-wallet links, groups, split assignments, invitations, and notifications. The active wallet signs payments; Arc Mainnet records direct USDC transfers and the shared-purchase escrow state.

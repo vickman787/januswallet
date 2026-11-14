@@ -4,11 +4,13 @@ import { isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
 import { ApiError, profileInput, walletAddress, type Store } from './core.js'
 import type { ProductProfile, ProductPurchase, ProductPurchaseNoticeState, ProductStore } from './products.js'
+import { parsePushSubscription, type PushMessage, type PushService } from './push.js'
 
 type Dependencies = {
   origin: string
   store: Store
   products?: ProductStore
+  push?: PushService
   verifyToken: (header: string | undefined) => Promise<string>
   verifyWallet: (message: string, signature: Hex, address: Hex) => Promise<boolean>
   verifyTransfer?: (hash: Hash, from: Address, to: Address, amount: bigint) => Promise<boolean>
@@ -65,6 +67,12 @@ export function createHandler(deps: Dependencies) {
     if (++entry.count > max || (!limits.has(key) && limits.size >= 10000)) throw new ApiError(429, 'Too many requests. Try again in a minute.')
     limits.set(key, entry)
   }
+  async function sendPush(profileIds: string[], message: PushMessage) {
+    if (!deps.push) return
+    try { await deps.push.send(profileIds, message) }
+    catch (error) { console.error('JANUS push delivery failed:', error) }
+  }
+
   async function resolveProfile(value: unknown): Promise<{ profile: ProductProfile; address: string }> {
     if (!deps.products || typeof value !== 'string') throw new ApiError(400, 'Use a verified JANUS username or wallet address.')
     const input = value.trim()
@@ -152,6 +160,22 @@ export function createHandler(deps: Dependencies) {
       }
       if (!profile) throw new ApiError(409, 'Save your profile first.')
 
+      if (req.method === 'GET' && path === '/api/push/config') {
+        if (!deps.push) throw new ApiError(503, 'Push alerts are not configured yet.')
+        await deps.push.ready()
+        return reply(200, { publicKey: deps.push.publicKey })
+      }
+      if (req.method === 'POST' && path === '/api/push/subscribe') {
+        if (!deps.push) throw new ApiError(503, 'Push alerts are not configured yet.')
+        await deps.push.subscribe(profile.id, parsePushSubscription(body.subscription))
+        return reply(200, { subscribed: true })
+      }
+      if (req.method === 'POST' && path === '/api/push/unsubscribe') {
+        if (!deps.push) throw new ApiError(503, 'Push alerts are not configured yet.')
+        await deps.push.unsubscribe(profile.id, body.endpoint as string)
+        return reply(200, { subscribed: false })
+      }
+
       if (req.method === 'POST' && path === '/api/wallet/challenge') {
         limit('challenge:' + subject, 5)
         const address = walletAddress(body.address)
@@ -235,6 +259,11 @@ export function createHandler(deps: Dependencies) {
         const purchase = await deps.products.savePurchase(profile.id, {
           chainId, contract, onchainId: purchaseId, groupId, title, description, txHash: hash,
         }, resolved.map(item => item.profile))
+        await sendPush(resolved.map(item => item.profile.id), {
+          eventKey: 'purchase-invite:' + purchase.id, title: 'Shared purchase invitation',
+          body: 'You were invited to ' + purchase.title + '.',
+          url: '/#purchase=' + chainId + ':' + purchaseId,
+        })
         return reply(201, { purchase, invited: resolved.length })
       }
       const purchaseRead = /^\/api\/purchases\/([0-9a-f-]{36})\/read$/.exec(path)
@@ -271,6 +300,10 @@ export function createHandler(deps: Dependencies) {
         if (memberIds.includes(profile.id)) throw new ApiError(409, 'You are already the group organizer. Remove your own username or wallet from Members.')
         if (new Set(memberIds).size !== memberIds.length) throw new ApiError(409, 'Each member may be added only once.')
         const created = await deps.products.createGroup(profile.id, name, description, resolved.map(item => item.profile))
+        await sendPush(resolved.map(item => item.profile.id), {
+          eventKey: 'group-invite:' + created.id, title: 'JANUS group invitation',
+          body: 'You were invited to ' + created.name + '.', url: '/#inbox',
+        })
         return reply(201, { group: created })
       }
       const groupMembership = /^\/api\/groups\/([0-9a-f-]{36})\/membership$/.exec(path)
@@ -288,6 +321,10 @@ export function createHandler(deps: Dependencies) {
         if (memberIds.includes(profile.id)) throw new ApiError(409, 'You are already the group organizer. Remove your own username or wallet from Members.')
         if (new Set(memberIds).size !== memberIds.length) throw new ApiError(409, 'Each member may be added only once.')
         const added = await deps.products.addGroupMembers(groupMembers[1], profile.id, resolved.map(item => item.profile))
+        if (added) await sendPush(resolved.map(item => item.profile.id), {
+          eventKey: 'group-invite:' + groupMembers[1], title: 'JANUS group invitation',
+          body: 'You were invited to a group.', url: '/#inbox',
+        })
         return reply(200, { added })
       }
       const groupMember = /^\/api\/groups\/([0-9a-f-]{36})\/members\/([0-9a-f-]{36})$/.exec(path)
@@ -302,6 +339,17 @@ export function createHandler(deps: Dependencies) {
         if (body.status !== 'accepted' && body.status !== 'declined') throw new ApiError(400, 'Choose whether to accept or decline this invitation.')
         const changed = await deps.products.respondGroup(groupResponse[1], profile.id, body.status)
         if (!changed) throw new ApiError(409, 'This group invitation is no longer pending.')
+        if (body.status === 'accepted') {
+          try {
+            const groups = await deps.products.groupsFor(profile.id)
+            const parent = groups.groups.find(item => item.id === groupResponse[1])
+            const members = groups.members.filter(item => item.group_id === groupResponse[1] && item.profile_id !== profile.id && item.status === 'accepted')
+            await sendPush(members.map(item => item.profile_id), {
+              eventKey: 'group-joined:' + groupResponse[1] + ':' + profile.id,
+              title: 'New group member', body: '@' + profile.username + ' joined ' + (parent?.name ?? 'your group') + '.', url: '/#inbox',
+            })
+          } catch (error) { console.error('JANUS group push lookup failed:', error) }
+        }
         return reply(200, { status: body.status })
       }
 
@@ -364,6 +412,10 @@ export function createHandler(deps: Dependencies) {
           payableAmounts,
         )
         const stored = await deps.products.split(created.id)
+        if (kind === 'named') await sendPush(members.map(item => item.id), {
+          eventKey: 'split-invite:' + created.id, title: 'New JANUS split',
+          body: 'You have a share in ' + created.title + '.', url: '/#split=' + created.id,
+        })
         return reply(201, stored)
       }
 

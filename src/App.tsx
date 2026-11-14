@@ -43,7 +43,7 @@ function purchaseFromHash(): { chainId: 5042 | 5042002; id: Hash } | undefined {
 function AccountApp() {
   const auth = useJanusAuth()
   const { authenticated, ready } = auth
-  const [screen, setScreen] = useState<Screen>('home')
+  const [screen, setScreen] = useState<Screen>(() => window.location.hash === '#inbox' ? 'inbox' : 'home')
   const [showLanding, setShowLanding] = useState(false)
   const [sendIntent, setSendIntent] = useState(0)
   const [splitId, setSplitId] = useState(splitFromHash)
@@ -58,7 +58,7 @@ function AccountApp() {
     retry: false,
   })
   useEffect(() => {
-    const changed = () => { setSplitId(splitFromHash()); setPurchaseRoute(purchaseFromHash()) }
+    const changed = () => { setSplitId(splitFromHash()); setPurchaseRoute(purchaseFromHash()); if (window.location.hash === '#inbox') setScreen('inbox') }
     window.addEventListener('hashchange', changed)
     return () => window.removeEventListener('hashchange', changed)
   }, [])

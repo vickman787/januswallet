@@ -36,6 +36,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^11.15.0",
     "jose": "^6.2.12",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.468.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
@@ -43,8 +44,8 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.6.0",
     "viem": "^2.56.3",
-    "jsqr": "^1.4.0",
-    "wagmi": "^2.19.5"
+    "wagmi": "^2.19.5",
+    "web-push": "^4.0.0"
   },
   "overrides": {
     "viem": "^2.56.3"
@@ -54,6 +55,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "oxlint": "^1.80.0",

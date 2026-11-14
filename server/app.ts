@@ -4,6 +4,7 @@ import { hasExpectedTransfer } from '../src/lib/payments.js'
 import { createTokenVerifier, createStore } from './core.js'
 import { createHandler } from './handler.js'
 import { createProductStore, purchaseInboxComplete, purchaseNoticeKind, type ProductPurchaseNoticeState } from './products.js'
+import { createPushService } from './push.js'
 
 const arcUsdc = '0x3600000000000000000000000000000000000000' as const
 const testnetPurchase = '0xbcae6c22c0c3c2509f920613a4900065bfe00442'
@@ -52,6 +53,10 @@ export function createJanusHandler() {
   const database = new URL(process.env.SUPABASE_URL!)
   if (database.protocol !== 'https:') throw new Error('SUPABASE_URL must use HTTPS.')
 
+  const pushPublic = process.env.VAPID_PUBLIC_KEY?.trim()
+  const pushPrivate = process.env.VAPID_PRIVATE_KEY?.trim()
+  if (Boolean(pushPublic) !== Boolean(pushPrivate)) throw new Error('Set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.')
+
   const client = createPublicClient({ chain: arc, transport: http(undefined, { timeout: 10000, retryCount: 1 }) })
   const testnetClient = createPublicClient({ chain: arcTestnet, transport: http(undefined, { timeout: 10000, retryCount: 1 }) })
 
@@ -59,6 +64,7 @@ export function createJanusHandler() {
     origin,
     store: createStore(database.origin, serverKey!),
     products: createProductStore(database.origin, serverKey!),
+    push: pushPublic && pushPrivate ? createPushService(database.origin, serverKey!, pushPublic, pushPrivate, origin) : undefined,
     verifyToken: createTokenVerifier(process.env.PRIVY_APP_ID!, process.env.PRIVY_VERIFICATION_KEY),
     verifyWallet: (message, signature, address) => client.verifySiweMessage({ message, signature, address, domain: new URL(origin).host }),
     verifyTransfer: async (hash, from, to, amount) => {
