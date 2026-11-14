@@ -8,7 +8,8 @@ const handler = createJanusHandler()
 
 export default async function janusApi(req: IncomingMessage, res: ServerResponse) {
   req.url = restoreApiRequestUrl(req.url, 'https://januswallet.xyz')
-  if (req.url === '/api/cron/purchase-reminders') {
+  const routePath = new URL(req.url ?? '/', 'https://januswallet.xyz').pathname.replace(/\/+$/, '')
+  if (routePath === '/api/cron/purchase-reminders') {
     const secret = process.env.CRON_SECRET?.trim()
     const supplied = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : ''
     const authorized = Boolean(secret && supplied && Buffer.byteLength(secret) === Buffer.byteLength(supplied) &&
