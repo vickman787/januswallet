@@ -1,3 +1,10 @@
+self.addEventListener('install', event => {
+  event.waitUntil(self.skipWaiting())
+})
+
+self.addEventListener('activate', event => {
+  event.waitUntil(self.clients.claim())
+})
 self.addEventListener('push', event => {
   if (!event.data) return
   let message
@@ -16,16 +23,24 @@ self.addEventListener('push', event => {
 })
 
 self.addEventListener('notificationclick', event => {
-  event.notification.close()
   const destination = new URL(event.notification.data?.url || '/', self.location.origin)
   if (destination.origin !== self.location.origin) return
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     const existing = windows.find(client => new URL(client.url).origin === self.location.origin)
     if (existing) {
-      await existing.navigate(destination.href)
-      return existing.focus()
+      try {
+        const target = existing.url === destination.href ? existing : await existing.navigate(destination.href)
+        if (target) {
+          await target.focus()
+          return
+        }
+      } catch {
+        // Some browsers refuse to navigate an existing tab from a notification.
+      }
     }
-    return self.clients.openWindow(destination.href)
+    const opened = await self.clients.openWindow(destination.href)
+    if (opened) await opened.focus()
   })())
+  event.notification.close()
 })
