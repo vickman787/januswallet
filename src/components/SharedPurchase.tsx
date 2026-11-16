@@ -179,6 +179,11 @@ export default function SharedPurchase({ onClose, onOpenDocs, network = 'mainnet
         })
         await queries.invalidateQueries({ queryKey: ['janus-purchase-activity', auth.subject] })
       }
+      if (kind === 'contribute' && resolvedId && contract) {
+        void janusApi(auth, 'purchases/contributions/confirm', { method: 'POST', body: {
+          chainId: targetChainId, contract, purchaseId: resolvedId, contributor: address, hash: submittedHash,
+        } }).catch(error => console.error('JANUS contribution alert could not be sent:', error))
+      }
       clearPendingPurchase(address, targetChainId); setPending(undefined); setHash(submittedHash); setReview(undefined)
       setNotice(kind === 'approve' ? 'Exact allowance confirmed. Review the contribution next.' : 'Action confirmed on ' + networkName + '.')
       if (kind === 'create') setMode('open')

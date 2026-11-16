@@ -193,6 +193,7 @@ export interface ProductStore {
   confirmShare(splitId: string, index: number, profileId: string, wallet: string, hash: string): Promise<boolean>
   inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; groupJoinNotices: { notificationId: string; group: ProductGroup; member: ProductProfile }[]; purchases: ProductPurchaseInvitation[]; notificationPurchases: ProductPurchase[] }>
   markNotification(id: string, profileId: string): Promise<boolean>
+  purchaseByOnchain(chainId: number, contract: string, onchainId: string): Promise<ProductPurchase | null>
   purchasesFor(profileId: string): Promise<ProductActivityPurchase[]>
   markPurchaseRead(purchaseId: string, profileId: string): Promise<boolean>
   setPurchaseInvitationStatus(purchaseId: string, profileId: string, status: 'invited' | 'dismissed'): Promise<boolean>
@@ -457,6 +458,10 @@ export function createProductStore(url: string, key: string): ProductStore {
         purchases,
         notificationPurchases,
       }
+    },
+    async purchaseByOnchain(chainId, contract, onchainId) {
+      const row = await one('purchases?chain_id=eq.' + chainId + '&onchain_id=eq.' + encodeURIComponent(onchainId.toLowerCase()) + '&contract_address=eq.' + encodeURIComponent(contract.toLowerCase()) + '&select=*')
+      return row ? purchase(row) : null
     },
     async purchasesFor(profileId) {
       const [ownedData, participantData] = await Promise.all([

@@ -27,6 +27,15 @@ const purchaseStateAbi = [{
   outputs: [{ name: '', type: 'bool' }],
 }] as const
 
+const contributedAbi = [{
+  type: 'event', name: 'Contributed',
+  inputs: [
+    { name: 'purchaseId', type: 'bytes32', indexed: true },
+    { name: 'contributor', type: 'address', indexed: true },
+    { name: 'amount', type: 'uint256', indexed: false },
+    { name: 'totalContributed', type: 'uint256', indexed: false },
+  ],
+}] as const
 const purchaseCreatedAbi = [{
   type: 'event', name: 'PurchaseCreated',
   inputs: [
@@ -70,6 +79,18 @@ export function createJanusHandler() {
     verifyTransfer: async (hash, from, to, amount) => {
       const receipt = await client.getTransactionReceipt({ hash })
       return receipt.status === 'success' && hasExpectedTransfer(receipt.logs, arcUsdc, from, to, amount)
+    },
+    verifyPurchaseContribution: async input => {
+      const expected = input.chainId === 5042002 ? testnetPurchase : process.env.JANUS_PURCHASE_ADDRESS?.trim().toLowerCase()
+      if (!expected || input.contract.toLowerCase() !== expected) return null
+      const purchaseClient = input.chainId === 5042002 ? testnetClient : client
+      const receipt = await purchaseClient.getTransactionReceipt({ hash: input.hash })
+      if (receipt.status !== 'success') return null
+      const events = parseEventLogs({ abi: contributedAbi, eventName: 'Contributed', logs: receipt.logs })
+      const matching = events.filter(event => event.address.toLowerCase() === expected &&
+        event.args.purchaseId?.toLowerCase() === input.purchaseId.toLowerCase() &&
+        event.args.contributor?.toLowerCase() === input.contributor.toLowerCase())
+      return matching.length ? matching.reduce((sum, event) => sum + (event.args.amount ?? 0n), 0n) : null
     },
     purchaseNoticeStates: async (purchases, wallets, profileId) => {
       const states: ProductPurchaseNoticeState[] = []

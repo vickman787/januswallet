@@ -1,6 +1,6 @@
 # Web push alerts
 
-JANUS supports optional browser and phone alerts for new group invitations, accepted group members, named split shares, and shared purchase invitations. Alerts are tied to the signed-in JANUS profile and the browser installation. The Inbox remains the source of truth; push delivery is best effort and does not confirm a payment or change an on-chain state.
+JANUS supports optional browser and phone alerts for group invitations and joins, named split shares, shared purchase invitations, confirmed direct USDC sends and receipts, paid split shares, and purchase contributions. Alerts are tied to the signed-in JANUS profile and the browser installation. Activity and the relevant split or purchase page remain the source of truth; push delivery is best effort and does not change an on-chain state.
 
 ## Enable in a deployment
 
@@ -23,3 +23,9 @@ To activate the worker:
 4. Deploy the API with the migration in place. Check Supabase Cron run history and the Vercel function logs, then test with a short-lived test purchase and an opted-in second browser. A reminder only sends if on-chain state says the purchase still needs action.
 
 The scheduled endpoint is `POST /api/cron/purchase-reminders`. It accepts only the configured bearer secret. Push delivery keys prevent repeats when the job runs more than once in the same window. Vercel Hobby cron alone cannot provide a reliable five-minute schedule, which is why Supabase runs the timer.
+
+## Payment alerts
+
+After JANUS verifies a confirmed direct USDC transfer, it alerts the sender and, when the receiving address belongs to a JANUS profile, the recipient. A confirmed split share alerts the payer, organizer, and the verified pay recipient. A confirmed purchase contribution alerts the contributor and purchase organizer. Tapping a transfer alert opens Activity; split and purchase alerts open the corresponding task. Each browser needs its own enabled push subscription.
+
+The five-minute Supabase Cron job also checks recent Arc Mainnet USDC transfers into verified wallets with active push subscriptions. This catches receipts from outside JANUS while the app is closed. Its first check establishes a baseline and does not notify for older transactions. It skips transfers already recorded as split payments and deduplicates receipts that JANUS already announced. A missed or delayed Cron run, explorer outage, browser push-provider issue, or a very busy wallet can delay or prevent an alert; check Activity for the complete transaction history. Purchase contribution alerts depend on the app finishing the confirmation call.

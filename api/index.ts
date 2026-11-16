@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { createJanusHandler } from '../server/app.js'
 import { runPurchaseDeadlineReminders } from '../server/reminders.js'
+import { runTransferAlerts } from '../server/transfer-alerts.js'
 import { restoreApiRequestUrl } from '../server/routing.js'
 
 const handler = createJanusHandler()
@@ -19,11 +20,11 @@ export default async function janusApi(req: IncomingMessage, res: ServerResponse
       return
     }
     try {
-      const result = await runPurchaseDeadlineReminders()
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(result))
+      const [reminders, transfers] = await Promise.all([runPurchaseDeadlineReminders(), runTransferAlerts()])
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ reminders, transfers }))
     } catch (error) {
-      console.error('Purchase reminder job failed:', error)
-      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ error: 'Reminder job unavailable.' }))
+      console.error('Notification job failed:', error)
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ error: 'Notification job unavailable.' }))
     }
     return
   }

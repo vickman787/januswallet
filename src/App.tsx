@@ -43,7 +43,7 @@ function purchaseFromHash(): { chainId: 5042 | 5042002; id: Hash } | undefined {
 function AccountApp() {
   const auth = useJanusAuth()
   const { authenticated, ready } = auth
-  const [screen, setScreen] = useState<Screen>(() => window.location.hash === '#inbox' ? 'inbox' : 'home')
+  const [screen, setScreen] = useState<Screen>(() => window.location.hash === '#inbox' ? 'inbox' : window.location.hash === '#activity' ? 'activity' : 'home')
   const [showLanding, setShowLanding] = useState(false)
   const [sendIntent, setSendIntent] = useState(0)
   const [splitId, setSplitId] = useState(splitFromHash)
@@ -58,7 +58,7 @@ function AccountApp() {
     retry: false,
   })
   useEffect(() => {
-    const changed = () => { setSplitId(splitFromHash()); setPurchaseRoute(purchaseFromHash()); if (window.location.hash === '#inbox') setScreen('inbox') }
+    const changed = () => { setSplitId(splitFromHash()); setPurchaseRoute(purchaseFromHash()); if (window.location.hash === '#inbox') setScreen('inbox'); if (window.location.hash === '#activity') setScreen('activity') }
     window.addEventListener('hashchange', changed)
     return () => window.removeEventListener('hashchange', changed)
   }, [])
@@ -75,6 +75,7 @@ function AccountApp() {
     setShowLanding(true)
   }
   function changeScreen(next: Screen) {
+    if (window.location.hash === '#activity' || window.location.hash === '#inbox') history.replaceState(null, '', window.location.pathname + window.location.search)
     if (next === 'send') { setScreen('home'); setSendIntent(count => count + 1); return }
     setSendIntent(0)
     setScreen(next)

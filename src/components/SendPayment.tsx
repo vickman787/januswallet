@@ -7,6 +7,8 @@ import { buildTxExplorerUrl } from '../onchain-facts'
 import { parseUsdcInput, hasExpectedTransfer } from '../lib/payments'
 import { resolveRecipientInput } from '../lib/recipients'
 import { useWalletIdentity } from '../hooks/useWalletIdentity'
+import { useJanusAuth } from '../auth/AccountProvider'
+import { janusApi } from '../lib/api'
 import { ARC_MAINNET_ID } from '../contracts'
 import Dialog from './Dialog'
 import RecipientScanner from './RecipientScanner'
@@ -18,6 +20,7 @@ type Stage = 'form' | 'review' | 'signing' | 'confirming' | 'confirmed' | 'uncon
 
 export default function SendPayment({ balance, onClose }: { balance?: bigint; onClose: () => void }) {
   const { address, chainId } = useAccount()
+  const auth = useJanusAuth()
   const client = usePublicClient({ chainId: ARC_MAINNET_ID })
   const { switchChainAsync } = useSwitchChain()
   const { writeContractAsync } = useWriteContract()
@@ -63,6 +66,9 @@ export default function SendPayment({ balance, onClose }: { balance?: bigint; on
     }
     clearPendingTransfer(transfer.account)
     setStage('confirmed')
+    void janusApi(auth, 'transfers/confirm', { method: 'POST', body: {
+      hash: transactionHash, from: transfer.account, to: transfer.to, amountRaw: transfer.amount.toString(),
+    } }).catch(error => console.error('JANUS transfer alert could not be sent:', error))
     // Refresh errors must never turn a confirmed payment into a failure.
     void queries.invalidateQueries({ predicate: query => query.queryKey[0] === 'readContract' || query.queryKey[0] === 'usdc-activity' })
       .catch(() => { /* Queries expose their own retry states. */ })

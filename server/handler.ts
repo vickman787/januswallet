@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { isAddress, type Address, type Hash, type Hex } from 'viem'
+import { formatUnits, isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
 import { ApiError, profileInput, walletAddress, type Store } from './core.js'
 import type { ProductProfile, ProductPurchase, ProductPurchaseNoticeState, ProductStore } from './products.js'
@@ -18,6 +18,7 @@ type Dependencies = {
     chainId: number; contract: Address; hash: Hash; purchaseId: Hash; organizer: Address
     recipient: Address; target: bigint; fundingDeadline: number; releaseDeadline: number
   }) => Promise<boolean>
+  verifyPurchaseContribution?: (input: { chainId: number; contract: Address; hash: Hash; purchaseId: Hash; contributor: Address }) => Promise<bigint | null>
   purchaseNoticeStates?: (purchases: ProductPurchase[], wallets: Address[], profileId: string) => Promise<ProductPurchaseNoticeState[]>
 }
 
@@ -215,6 +216,58 @@ export function createHandler(deps: Dependencies) {
         return reply(200, result)
       }
 
+      if (path === '/api/transfers/confirm' && req.method === 'POST') {
+        if (!deps.verifyTransfer) throw new ApiError(503, 'Payment verification is not configured.')
+        const from = walletAddress(body.from)
+        const to = walletAddress(body.to)
+        const hash = typeof body.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(body.hash) ? body.hash as Hash : null
+        if (!hash) throw new ApiError(400, 'Transaction hash is invalid.')
+        const amount = amountRaw(body.amountRaw)
+        const verifiedWallets = await deps.store.wallets(profile.id)
+        if (!verifiedWallets.some(item => item.address === from.toLowerCase() && item.chain_id === 5042)) {
+          throw new ApiError(403, 'Send from your verified Arc wallet.')
+        }
+        if (!await deps.verifyTransfer(hash, from, to, amount)) throw new ApiError(400, 'The transaction does not contain this confirmed USDC transfer.')
+        const recipient = await deps.products?.profileByWallet(to.toLowerCase())
+        const display = formatUnits(amount, 6) + ' USDC'
+        await sendPush([profile.id], {
+          eventKey: 'transfer-sent:' + hash.toLowerCase() + ':' + from.toLowerCase() + ':' + to.toLowerCase(),
+          title: 'USDC sent', body: display + ' sent to ' + (recipient ? '@' + recipient.username : to.slice(0, 8) + '…') + '.',
+          url: '/#activity',
+        })
+        if (recipient && recipient.id !== profile.id) await sendPush([recipient.id], {
+          eventKey: 'transfer-received:' + hash.toLowerCase() + ':' + to.toLowerCase(),
+          title: 'USDC received', body: display + ' received from @' + profile.username + '.', url: '/#activity',
+        })
+        return reply(200, { confirmed: true })
+      }
+      if (path === '/api/purchases/contributions/confirm' && req.method === 'POST') {
+        if (!deps.products || !deps.verifyPurchaseContribution) throw new ApiError(503, 'Purchase verification is not configured.')
+        const chainId = body.chainId
+        if (chainId !== 5042 && chainId !== 5042002) throw new ApiError(400, 'Purchase network is invalid.')
+        const contract = walletAddress(body.contract)
+        const contributor = walletAddress(body.contributor)
+        const purchaseId = typeof body.purchaseId === 'string' && /^0x[0-9a-fA-F]{64}$/.test(body.purchaseId) ? body.purchaseId.toLowerCase() as Hash : null
+        const hash = typeof body.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(body.hash) ? body.hash as Hash : null
+        if (!purchaseId || !hash) throw new ApiError(400, 'Purchase transaction details are invalid.')
+        const verifiedWallets = await deps.store.wallets(profile.id)
+        if (!verifiedWallets.some(item => item.address === contributor.toLowerCase() && item.chain_id === 5042)) throw new ApiError(403, 'Contribute with your verified Arc wallet.')
+        const purchase = await deps.products.purchaseByOnchain(chainId, contract, purchaseId)
+        if (!purchase || purchase.contract_address.toLowerCase() !== contract.toLowerCase()) throw new ApiError(404, 'Purchase not found.')
+        const amount = await deps.verifyPurchaseContribution({ chainId, contract, hash, purchaseId, contributor })
+        if (!amount || amount <= 0n) throw new ApiError(400, 'The transaction does not contain this confirmed contribution.')
+        const url = '/#purchase=' + chainId + ':' + purchaseId
+        const display = formatUnits(amount, 6) + ' USDC'
+        await sendPush([profile.id], {
+          eventKey: 'purchase-contributed:' + hash.toLowerCase() + ':' + purchaseId,
+          title: 'Purchase contribution paid', body: 'You contributed ' + display + ' to ' + purchase.title + '.', url,
+        })
+        if (purchase.organizer_id !== profile.id) await sendPush([purchase.organizer_id], {
+          eventKey: 'purchase-contribution-received:' + hash.toLowerCase() + ':' + purchaseId,
+          title: 'New purchase contribution', body: '@' + profile.username + ' contributed ' + display + ' to ' + purchase.title + '.', url,
+        })
+        return reply(200, { confirmed: true })
+      }
       if (path === '/api/purchases' && req.method === 'GET') {
         if (!deps.products) throw new ApiError(503, 'Purchase service is not configured.')
         return reply(200, { purchases: await deps.products.purchasesFor(profile.id) })
@@ -443,6 +496,18 @@ export function createHandler(deps: Dependencies) {
         if (!valid) throw new ApiError(400, 'The transaction does not contain the expected Arc USDC payment.')
         const confirmed = await deps.products.confirmShare(found.split.id, index, profile.id, wallet.toLowerCase(), body.hash.toLowerCase())
         if (!confirmed) throw new ApiError(409, 'This share could not be confirmed.')
+        const recipient = await deps.products.profileByWallet(found.split.recipient_address.toLowerCase())
+        const display = formatUnits(BigInt(selected.amount_raw), 6) + ' USDC'
+        const url = '/#split=' + found.split.id
+        await sendPush([profile.id], {
+          eventKey: 'split-share-paid:' + found.split.id + ':' + index,
+          title: 'Split share paid', body: 'You paid ' + display + ' for ' + found.split.title + '.', url,
+        })
+        const observers = [...new Set([found.split.organizer_id, recipient?.id].filter((id): id is string => Boolean(id && id !== profile.id)))]
+        await sendPush(observers, {
+          eventKey: 'split-share-received:' + found.split.id + ':' + index,
+          title: 'Split share paid', body: '@' + profile.username + ' paid ' + display + ' for ' + found.split.title + '.', url,
+        })
         return reply(200, { confirmed: true })
       }
       throw new ApiError(404, 'Not found.')
