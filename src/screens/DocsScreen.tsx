@@ -13,11 +13,11 @@ const topics: Topic[] = [
     id: 'compare', title: 'Split vs Purchase',
     summary: 'Choose based on when the recipient should receive USDC. A Split sends exact shares directly; a Purchase holds flexible contributions in escrow.',
     points: [
-      { title: 'Where does the money go?', body: 'Split: each payer sends USDC directly to the saved recipient. Purchase: contributions stay in the JanusPurchase contract until release or refund.' },
+      { title: 'Where does the money go?', body: 'Split: each payer sends USDC directly to the saved recipient or divides their share among multiple saved recipients. Purchase: contributions stay in the JanusPurchase contract until release or refund.' },
       { title: 'How much can one person pay?', body: 'Split: a payer covers their exact assigned or open share. Purchase: a contributor chooses any positive amount up to the remaining target. One wallet can fund the whole purchase.' },
       { title: 'Who can participate?', body: 'Split: named shares belong to their assigned JANUS accounts; open shares can be claimed through a link. Purchase: invited accounts see it in Inbox, but anyone with the purchase ID can contribute on-chain.' },
       { title: 'What if others do not pay?', body: 'Split: direct payments already sent remain with the recipient. Purchase: underfunded escrow can be marked expired after the funding deadline, then each contributor claims a refund.' },
-      { title: 'Can the recipient be changed?', body: 'Choose the recipient before creating either flow. JANUS has no user-facing recipient edit after a split is created; the purchase recipient is fixed on-chain.' },
+      { title: 'Can the recipient be changed?', body: 'Choose all pay recipients before creating either flow. JANUS has no user-facing recipient edit after a split is created; the purchase recipient is fixed on-chain.' },
     ],
   },
   {
@@ -42,11 +42,11 @@ const topics: Topic[] = [
   },
   {
     id: 'split', title: 'Split a bill',
-    summary: 'Exact shares paid directly to one recipient.',
+    summary: 'Exact shares paid directly to one or more recipients.',
     points: [
-      { title: 'Create a split', body: 'Add a title, total and pay recipient. The recipient starts as your wallet, but you can change it to another verified JANUS username or wallet before creation.' },
+      { title: 'Create a split', body: 'Add a title, total and pay recipient. For multiple recipients, choose equal or individual recipient amounts. Review the payout list before creating the split.' },
       { title: 'Named or open', body: 'Named splits assign exact shares to verified accounts and can include accepted group members. Open splits create a chosen number of shares to claim through a link.' },
-      { title: 'Pay a share', body: 'Each payer transfers their share directly to the saved recipient. JANUS records the confirmed transfer; there is no escrow or JANUS-managed refund.' },
+      { title: 'Pay a share', body: 'Each payer transfers their share directly to the saved recipient. With multiple recipients, a share needs one transfer per recipient; JANUS tracks each transfer and marks the share paid only when all are confirmed. There is no escrow or JANUS-managed refund.' },
     ],
   },
   {

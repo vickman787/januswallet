@@ -14,7 +14,8 @@ type WalletProfile = { address: string; username: string; displayName: string }
 type WalletProfiles = { profiles: WalletProfile[] }
 type RecordedSplit = {
   split: { recipient_address?: string }
-  shares: { status: string; amount_raw: string; payer_address?: string | null; confirmed_tx_hash?: string | null }[]
+  shares: { share_index?: number; status: string; amount_raw: string; payer_address?: string | null; confirmed_tx_hash?: string | null }[]
+  payouts?: { share_index: number; recipient_address: string; amount_raw: string; confirmed_tx_hash: string | null }[]
 }
 type RecordedSplits = { splits: RecordedSplit[] }
 type PurchaseTransaction = { to: Address | null; input: `0x${string}` }
@@ -61,14 +62,21 @@ export default function TransferActivity({ compact = false }: { compact?: boolea
     refetchOnWindowFocus: true,
     retry: false,
   })
-  const splitProofs: SplitProof[] = (splitActivity.data?.splits ?? []).flatMap(item =>
-    item.shares.flatMap(share =>
+  const splitProofs: SplitProof[] = (splitActivity.data?.splits ?? []).flatMap(item => [
+    ...item.shares.flatMap(share =>
       share.status === 'paid' && validAddress(item.split.recipient_address) && validAddress(share.payer_address) &&
       validHash(share.confirmed_tx_hash) && /^\d+$/.test(share.amount_raw)
         ? [{ recipient: item.split.recipient_address, payer: share.payer_address, hash: share.confirmed_tx_hash, amount: BigInt(share.amount_raw) }]
         : [],
     ),
-  )
+    ...(item.payouts ?? []).flatMap(payout => {
+      const share = item.shares.find(row => row.share_index === payout.share_index)
+      return validAddress(payout.recipient_address) && validAddress(share?.payer_address) &&
+        validHash(payout.confirmed_tx_hash) && /^\d+$/.test(payout.amount_raw)
+        ? [{ recipient: payout.recipient_address, payer: share.payer_address, hash: payout.confirmed_tx_hash, amount: BigInt(payout.amount_raw) }]
+        : []
+    }),
+  ])
   const escrowHashes = escrowAddress ? [...new Set(activity.entries.filter(entry =>
     entry.from.toLowerCase() === escrowAddress || entry.to.toLowerCase() === escrowAddress,
   ).map(entry => entry.hash.toLowerCase() as Hash))].slice(0, 50) : []

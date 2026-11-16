@@ -12,7 +12,7 @@ export type ProductMembership = { group_id: string; profile_id: string; role: st
 export type ProductGroupMember = ProductMembership & { username: string; display_name: string }
 export type ProductSplit = {
   id: string; organizer_id: string; group_id: string | null; recipient_address: string
-  kind: 'named' | 'open'; total_raw: string; share_count: number; title: string
+  kind: 'named' | 'open'; total_raw: string; share_count: number; recipient_count: number; title: string
   description: string; chain_id: number; status: string; created_at: string
 }
 export type ProductShare = {
@@ -20,6 +20,7 @@ export type ProductShare = {
   profile_id: string | null; status: string; reserved_until: string | null
   payer_address: string | null; confirmed_tx_hash: string | null
 }
+export type ProductPayout = { split_id: string; share_index: number; payout_index: number; recipient_address: string; amount_raw: string; confirmed_tx_hash: string | null }
 export type ProductInboxSplit = { split: ProductSplit; share: ProductShare }
 export type ProductInboxGroup = { group: ProductGroup; membership: ProductMembership }
 export type ProductPurchase = {
@@ -142,7 +143,7 @@ function split(row: JsonRow): ProductSplit {
   return {
     id: text(row, 'id'), organizer_id: text(row, 'organizer_id'), group_id: optionalText(row, 'group_id'),
     recipient_address: text(row, 'recipient_address'), kind: row.kind, total_raw: numericString(row, 'total_raw'),
-    share_count: row.share_count, title: text(row, 'title'), description: text(row, 'description'),
+    share_count: row.share_count, recipient_count: typeof row.recipient_count === 'number' ? row.recipient_count : 1, title: text(row, 'title'), description: text(row, 'description'),
     chain_id: row.chain_id, status: text(row, 'status'), created_at: text(row, 'created_at'),
   }
 }
@@ -155,6 +156,11 @@ function share(row: JsonRow): ProductShare {
     reserved_until: optionalText(row, 'reserved_until'), payer_address: optionalText(row, 'payer_address'),
     confirmed_tx_hash: optionalText(row, 'confirmed_tx_hash'),
   }
+}
+function payout(row: JsonRow): ProductPayout {
+  return { split_id: text(row, 'split_id'), share_index: Number(row.share_index), payout_index: Number(row.payout_index),
+    recipient_address: text(row, 'recipient_address'), amount_raw: numericString(row, 'amount_raw'),
+    confirmed_tx_hash: optionalText(row, 'confirmed_tx_hash') }
 }
 function notification(row: JsonRow): ProductNotification {
   return {
@@ -186,11 +192,12 @@ export interface ProductStore {
   removeGroupMember(groupId: string, organizerId: string, memberId: string): Promise<boolean>
   leaveGroup(groupId: string, memberId: string): Promise<boolean>
   respondGroup(groupId: string, profileId: string, status: 'accepted' | 'declined'): Promise<boolean>
-  createSplit(ownerId: string, groupId: string | null, recipient: string, kind: 'named' | 'open', total: string, title: string, description: string, memberProfiles: (ProductProfile | null)[], amounts: string[]): Promise<ProductSplit>
-  split(id: string): Promise<{ split: ProductSplit; shares: ProductShare[] } | null>
+  createSplit(ownerId: string, groupId: string | null, recipient: string, kind: 'named' | 'open', total: string, title: string, description: string, memberProfiles: (ProductProfile | null)[], amounts: string[], payouts?: { shareIndex: number; payoutIndex: number; recipient: string; amount: string }[]): Promise<ProductSplit>
+  split(id: string): Promise<{ split: ProductSplit; shares: ProductShare[]; payouts: ProductPayout[] } | null>
   splitsFor(profileId: string): Promise<ProductSplit[]>
   claimShare(splitId: string, index: number, profileId: string, wallet: string): Promise<ProductShare | null>
   confirmShare(splitId: string, index: number, profileId: string, wallet: string, hash: string): Promise<boolean>
+  confirmPayout(splitId: string, index: number, payoutIndex: number, profileId: string, wallet: string, hash: string): Promise<{ complete: boolean } | null>
   inbox(profileId: string): Promise<{ requests: ProductRequest[]; memberships: ProductMembership[]; notifications: ProductNotification[]; splits: ProductInboxSplit[]; groups: ProductInboxGroup[]; groupJoinNotices: { notificationId: string; group: ProductGroup; member: ProductProfile }[]; purchases: ProductPurchaseInvitation[]; notificationPurchases: ProductPurchase[] }>
   markNotification(id: string, profileId: string): Promise<boolean>
   purchaseByOnchain(chainId: number, contract: string, onchainId: string): Promise<ProductPurchase | null>
@@ -340,10 +347,10 @@ export function createProductStore(url: string, key: string): ProductStore {
       }
       return true
     },
-    async createSplit(ownerId, groupId, recipient, kind, total, title, description, memberProfiles, amounts) {
+    async createSplit(ownerId, groupId, recipient, kind, total, title, description, memberProfiles, amounts, payouts) {
       const created = split(await insertOne('splits', {
         organizer_id: ownerId, group_id: groupId, recipient_address: recipient, kind, total_raw: total,
-        share_count: amounts.length, title, description, chain_id: 5042,
+        share_count: amounts.length, ...(payouts?.length ? { recipient_count: new Set(payouts.map(item => item.payoutIndex)).size } : {}), title, description, chain_id: 5042,
       }))
       try {
         await request('split_participants', 'POST', amounts.map((amount, index) => ({
@@ -354,8 +361,14 @@ export function createProductStore(url: string, key: string): ProductStore {
             status: 'unclaimed',
           } : {}),
         })))
+        if (payouts?.length) await request('split_payouts', 'POST', payouts.map(item => ({
+          split_id: created.id, share_index: item.shareIndex, payout_index: item.payoutIndex,
+          recipient_address: item.recipient, amount_raw: item.amount,
+        })))
         return created
       } catch (error) {
+        await deleteWhere('split_payouts?split_id=eq.' + encodeURIComponent(created.id))
+        await deleteWhere('split_participants?split_id=eq.' + encodeURIComponent(created.id))
         await deleteWhere('splits?id=eq.' + encodeURIComponent(created.id))
         throw error
       }
@@ -363,8 +376,10 @@ export function createProductStore(url: string, key: string): ProductStore {
     async split(id) {
       const row = await one('splits?id=eq.' + encodeURIComponent(id) + '&select=*')
       if (!row) return null
+      const parent = split(row)
       const shares = rows(await request('split_participants?split_id=eq.' + encodeURIComponent(id) + '&select=*&order=share_index.asc')).map(share)
-      return { split: split(row), shares }
+      const payouts = parent.recipient_count > 1 ? rows(await request('split_payouts?split_id=eq.' + encodeURIComponent(id) + '&select=*&order=share_index.asc,payout_index.asc')).map(payout) : []
+      return { split: parent, shares, payouts }
     },
     async splitsFor(profileId) {
       const owned = rows(await request('splits?organizer_id=eq.' + encodeURIComponent(profileId) + '&select=*&order=created_at.desc')).map(split)
@@ -375,6 +390,8 @@ export function createProductStore(url: string, key: string): ProductStore {
       return [...owned, ...joined]
     },
     async claimShare(splitId, index, profileId, wallet) {
+      const pending = await one('split_participants?split_id=eq.' + encodeURIComponent(splitId) + '&share_index=eq.' + index + '&profile_id=eq.' + encodeURIComponent(profileId) + '&wallet_address=eq.' + encodeURIComponent(wallet) + '&status=eq.pending&select=*')
+      if (pending) return share(pending)
       await request('split_participants?split_id=eq.' + encodeURIComponent(splitId) + '&share_index=eq.' + index + '&status=eq.reserved&reserved_until=lt.' + encodeURIComponent(new Date().toISOString()), 'PATCH', {
         status: 'unclaimed', profile_id: null, wallet_address: null, reserved_until: null,
       })
@@ -385,10 +402,22 @@ export function createProductStore(url: string, key: string): ProductStore {
       return result.length === 1 ? share(result[0]) : null
     },
     async confirmShare(splitId, index, profileId, wallet, hash) {
+      const parent = await one('splits?id=eq.' + encodeURIComponent(splitId) + '&select=*')
+      if (typeof parent?.recipient_count === 'number') {
+        const used = await one('split_payouts?confirmed_tx_hash=eq.' + encodeURIComponent(hash) + '&select=split_id')
+        if (used) return false
+      }
       const result = rows(await request('split_participants?split_id=eq.' + encodeURIComponent(splitId) + '&share_index=eq.' + index + '&profile_id=eq.' + encodeURIComponent(profileId) + '&status=in.(reserved,pending)&select=*', 'PATCH', {
         status: 'paid', payer_address: wallet, confirmed_tx_hash: hash, paid_at: new Date().toISOString(), reserved_until: null,
       }, 'return=representation'))
       return result.length === 1
+    },
+    async confirmPayout(splitId, index, payoutIndex, profileId, wallet, hash) {
+      const result = await request('rpc/confirm_split_payout', 'POST', {
+        p_split_id: splitId, p_share_index: index, p_payout_index: payoutIndex,
+        p_profile_id: profileId, p_wallet: wallet, p_hash: hash,
+      })
+      return typeof result === 'boolean' ? { complete: result } : null
     },
     async inbox(profileId) {
       const [requestsData, membershipsData, notificationsData, participantData, purchaseParticipantData, organizedPurchaseData] = await Promise.all([

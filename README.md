@@ -27,7 +27,7 @@ These are **illustrative frames from the [JANUS Wallet walkthrough](https://yout
 
 <img src="docs/tour/send.png" alt="Illustrative Send USDC form showing username and amount fields" width="620">
 
-**Split.** Set a bill total and recipient, assign exact shares to people or create open shares, and let each payer send directly to that recipient.
+**Split.** Set a bill total and one or more recipients, assign exact shares to people or create open shares, and let each payer send directly to those recipients.
 
 <img src="docs/tour/split.png" alt="Illustrative split bill view with three equal participant shares" width="620">
 
@@ -49,12 +49,14 @@ The wallet displays your Arc USDC balance and asks you to confirm transactions i
 | | Split | Shared Purchase |
 | --- | --- | --- |
 | Purpose | Collect exact shares for a bill | Collect flexible contributions toward a target |
-| Where USDC goes | Each payer sends directly to the saved recipient | Contributions enter the JanusPurchase escrow contract |
+| Where USDC goes | Each payer sends directly to the saved recipient(s) | Contributions enter the JanusPurchase escrow contract |
 | Participant amount | An assigned or claimed share | Any positive amount up to the remaining target; one wallet can fund it all |
-| Recipient | Chosen when the split is created | Fixed on-chain at creation |
+| Recipient | One or more, chosen when the split is created | Fixed on-chain at creation |
 | If plans change | JANUS cannot refund direct payments | The organizer can cancel before release, or an eligible purchase can be marked expired; contributors then claim their own refunds |
 
-For a **Split**, create named shares for verified JANUS accounts or open shares that people can claim through a link. You can include accepted group members in a named split. Each paid share transfers USDC straight to the saved recipient; there is no escrow.
+For a **Split**, create named shares for verified JANUS accounts or open shares that people can claim through a link. You can include accepted group members in a named split. Each paid share transfers USDC straight to its saved recipient, or is divided among up to 20 recipients with equal or individual target amounts. Multi-recipient shares require one confirmed transfer per recipient. There is no escrow.
+
+Apply `supabase/migrations/202611160001_multi_recipient_splits.sql` before deploying code that creates multi-recipient splits. Existing single-recipient splits continue to use their original payment flow.
 
 For a **Shared Purchase**, choose the recipient, target amount, funding deadline, and later release deadline. Invite verified JANUS participants individually or from a group so they can find the purchase in Inbox. Invitations are for discovery, not an on-chain restriction: someone with the purchase ID can also contribute. Once fully funded, only the organizer can release the escrowed USDC to the recipient before the release deadline.
 

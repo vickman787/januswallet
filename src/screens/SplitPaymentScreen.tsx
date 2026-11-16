@@ -14,6 +14,7 @@ import { buildTxExplorerUrl } from '../onchain-facts'
 type Split = {
   id: string
   recipient_address: Address
+  recipient_count?: number
   kind: 'named' | 'open'
   total_raw: string
   title: string
@@ -27,7 +28,8 @@ type Share = {
   amount_raw: string
   status: string
 }
-type SplitPayload = { split: Split; shares: Share[] }
+type Payout = { split_id: string; share_index: number; payout_index: number; recipient_address: Address; amount_raw: string; confirmed_tx_hash: string | null }
+type SplitPayload = { split: Split; shares: Share[]; payouts?: Payout[] }
 
 async function publicSplit(id: string, signal: AbortSignal): Promise<SplitPayload> {
   const response = await fetch('/api/splits/' + encodeURIComponent(id), { signal, cache: 'no-store' })
@@ -48,18 +50,20 @@ export default function SplitPaymentScreen({ id, returnTo, onClose, onCompletedC
   const [busy, setBusy] = useState<number>()
   const [hash, setHash] = useState<Hash>()
   const [pendingIndex, setPendingIndex] = useState<number>()
+  const [pendingPayoutIndex, setPendingPayoutIndex] = useState<number>()
   const [error, setError] = useState('')
   const [confirmed, setConfirmed] = useState<number>()
 
-  async function recordPayment(index: number, transactionHash: Hash) {
+  async function recordPayment(index: number, transactionHash: Hash, payoutIndex?: number) {
     if (!address) throw new Error('Connect your wallet first.')
-    await janusApi(auth, 'splits/' + id + '/shares/' + index + '/confirm', {
+    const result = await janusApi<{ complete?: boolean }>(auth, 'splits/' + id + '/shares/' + index + (payoutIndex === undefined ? '' : '/payouts/' + payoutIndex) + '/confirm', {
       method: 'POST',
       body: { wallet: address, hash: transactionHash },
     })
-    setConfirmed(index)
+    if (payoutIndex === undefined || result.complete) setConfirmed(index)
     setHash(undefined)
     setPendingIndex(undefined)
+    setPendingPayoutIndex(undefined)
     await Promise.all([
       queries.invalidateQueries({ queryKey: ['janus-split', id] }),
       queries.invalidateQueries({ queryKey: ['janus-inbox', auth.subject] }),
@@ -74,30 +78,30 @@ export default function SplitPaymentScreen({ id, returnTo, onClose, onCompletedC
         method: 'POST',
         body: { wallet: address },
       })
+      if (split.data?.split.recipient_count && split.data.split.recipient_count > 1 && !(split.data.payouts?.length)) throw new Error('Recipient payment details are unavailable. Do not send this share yet.')
       if (chainId !== ARC_MAINNET_ID) await switchChainAsync({ chainId: ARC_MAINNET_ID })
-      const amount = BigInt(share.amount_raw)
-      await client.simulateContract({
-        address: ARC_USDC_ADDRESS,
-        abi: erc20Abi,
-        functionName: 'transfer',
-        args: [split.data!.split.recipient_address, amount],
-        account: address,
-      })
-      const transactionHash = await writeContractAsync({
-        address: ARC_USDC_ADDRESS,
-        abi: erc20Abi,
-        functionName: 'transfer',
-        args: [split.data!.split.recipient_address, amount],
-        chainId: ARC_MAINNET_ID,
-        account: address,
-      })
-      setHash(transactionHash)
-      setPendingIndex(share.share_index)
-      const receipt = await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 60_000 })
-      if (receipt.status !== 'success' || !hasExpectedTransfer(receipt.logs, ARC_USDC_ADDRESS, address, split.data!.split.recipient_address, amount)) {
-        throw new Error('The transaction did not contain the expected Arc USDC transfer. Check it in the explorer.')
+      const payouts = (split.data?.payouts ?? []).filter(item => item.share_index === share.share_index && !item.confirmed_tx_hash)
+      const transfers = (split.data?.payouts ?? []).some(item => item.share_index === share.share_index)
+        ? payouts.map(item => ({ recipient: item.recipient_address, amount: BigInt(item.amount_raw), payoutIndex: item.payout_index }))
+        : [{ recipient: split.data!.split.recipient_address, amount: BigInt(share.amount_raw), payoutIndex: undefined }]
+      for (const transfer of transfers) {
+        await client.simulateContract({
+          address: ARC_USDC_ADDRESS, abi: erc20Abi, functionName: 'transfer',
+          args: [transfer.recipient, transfer.amount], account: address,
+        })
+        const transactionHash = await writeContractAsync({
+          address: ARC_USDC_ADDRESS, abi: erc20Abi, functionName: 'transfer',
+          args: [transfer.recipient, transfer.amount], chainId: ARC_MAINNET_ID, account: address,
+        })
+        setHash(transactionHash)
+        setPendingIndex(share.share_index)
+        setPendingPayoutIndex(transfer.payoutIndex)
+        const receipt = await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 60_000 })
+        if (receipt.status !== 'success' || !hasExpectedTransfer(receipt.logs, ARC_USDC_ADDRESS, address, transfer.recipient, transfer.amount)) {
+          throw new Error('The transaction did not contain the expected Arc USDC transfer. Check it in the explorer.')
+        }
+        await recordPayment(share.share_index, transactionHash, transfer.payoutIndex)
       }
-      await recordPayment(share.share_index, transactionHash)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Unable to pay this share.'
       setError(message.toLowerCase().includes('reject') || message.toLowerCase().includes('denied')
@@ -115,7 +119,7 @@ export default function SplitPaymentScreen({ id, returnTo, onClose, onCompletedC
       {split.data.split.description && <p className="text-sm text-[#A8B0BE]">{split.data.split.description}</p>}
       <dl className="text-sm space-y-2">
         <div className="flex justify-between gap-4"><dt>Total</dt><dd>{formatUnits(BigInt(split.data.split.total_raw), 6)} USDC</dd></div>
-        <div><dt className="text-[#A8B0BE]">Recipient</dt><dd className="mt-1">{recipientIdentity.data?.username ? <span className="font-medium">@{recipientIdentity.data.username}</span> : <span className="mono text-xs break-all">{split.data.split.recipient_address}</span>}{recipientIdentity.data?.username && <span className="mono block text-xs break-all text-[#A8B0BE] mt-1">{split.data.split.recipient_address}</span>}</dd></div>
+        <div><dt className="text-[#A8B0BE]">{split.data.payouts?.length ? 'First recipient' : 'Recipient'}</dt><dd className="mt-1">{recipientIdentity.data?.username ? <span className="font-medium">@{recipientIdentity.data.username}</span> : <span className="mono text-xs break-all">{split.data.split.recipient_address}</span>}{recipientIdentity.data?.username && <span className="mono block text-xs break-all text-[#A8B0BE] mt-1">{split.data.split.recipient_address}</span>}</dd></div>
       </dl>
       <div className="space-y-3">
         {split.data.shares.map(share => <div className="rounded-xl border border-white/10 p-3" key={share.share_index}>
@@ -124,13 +128,14 @@ export default function SplitPaymentScreen({ id, returnTo, onClose, onCompletedC
             {share.status !== 'paid' && <button className="janus-primary" disabled={busy !== undefined || !!hash} onClick={() => { void pay(share) }}>{busy === share.share_index ? 'Paying…' : 'Pay share'}</button>}
             {share.status === 'paid' && <span className="text-sm text-emerald-300">Paid</span>}
           </div>
+          {(split.data.payouts ?? []).filter(item => item.share_index === share.share_index).map(item => <div key={item.payout_index} className="mt-2 text-xs text-[#A8B0BE] flex justify-between gap-3"><span className="mono break-all">{item.recipient_address}</span><span className="whitespace-nowrap">{formatUnits(BigInt(item.amount_raw), 6)} USDC · {item.confirmed_tx_hash ? 'paid' : 'unpaid'}</span></div>)}
         </div>)}
       </div>
       {confirmed !== undefined && <p role="status" className="text-emerald-300">Share {confirmed + 1} is confirmed.</p>}
       {error && <p role="alert" className="text-sm text-amber-300">{error}</p>}
       {hash && <div className="space-y-3">
         <a className="inline-flex items-center gap-2 text-[#9BAEFF] underline break-all" href={buildTxExplorerUrl(ARC_MAINNET_ID, hash)} target="_blank" rel="noopener noreferrer">View submitted transaction <ExternalLink size={14} /></a>
-        {pendingIndex !== undefined && <button className="janus-primary w-full" disabled={busy !== undefined} onClick={() => { setBusy(pendingIndex); setError(''); void recordPayment(pendingIndex, hash).catch(cause => setError(cause instanceof Error ? cause.message : 'Unable to confirm this payment.')).finally(() => setBusy(undefined)) }}>Retry confirmation</button>}
+        {pendingIndex !== undefined && <button className="janus-primary w-full" disabled={busy !== undefined} onClick={() => { setBusy(pendingIndex); setError(''); void recordPayment(pendingIndex, hash, pendingPayoutIndex).catch(cause => setError(cause instanceof Error ? cause.message : 'Unable to confirm this payment.')).finally(() => setBusy(undefined)) }}>Retry confirmation</button>}
       </div>}
     </section>}
   </div>

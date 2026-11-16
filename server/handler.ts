@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { formatUnits, isAddress, type Address, type Hash, type Hex } from 'viem'
 import { createSiweMessage } from 'viem/siwe'
+import { allocateSplitPayouts } from '../src/lib/split-payouts.js'
 import { ApiError, profileInput, walletAddress, type Store } from './core.js'
 import type { ProductProfile, ProductPurchase, ProductPurchaseNoticeState, ProductStore } from './products.js'
 import { parsePushSubscription, type PushMessage, type PushService } from './push.js'
@@ -138,9 +139,11 @@ export function createHandler(deps: Dependencies) {
         if (!deps.products || !uuid.test(publicSplit[1])) throw new ApiError(404, 'Split not found.')
         const found = await deps.products.split(publicSplit[1])
         if (!found) throw new ApiError(404, 'Split not found.')
+        if (found.split.recipient_count > 1 && !found.payouts?.length) throw new ApiError(503, 'Split recipient payments are unavailable.')
         return reply(200, {
-          split: { id: found.split.id, recipient_address: found.split.recipient_address, kind: found.split.kind, total_raw: found.split.total_raw, share_count: found.split.share_count, title: found.split.title, description: found.split.description, chain_id: found.split.chain_id, status: found.split.status },
+          split: { id: found.split.id, recipient_address: found.split.recipient_address, recipient_count: found.split.recipient_count, kind: found.split.kind, total_raw: found.split.total_raw, share_count: found.split.share_count, title: found.split.title, description: found.split.description, chain_id: found.split.chain_id, status: found.split.status },
           shares: found.shares.map(item => ({ split_id: item.split_id, share_index: item.share_index, amount_raw: item.amount_raw, status: item.status })),
+          payouts: found.payouts ?? [],
         })
       }
 
@@ -427,20 +430,35 @@ export function createHandler(deps: Dependencies) {
           role: item.split.organizer_id === profile.id ? 'organizer' : 'participant',
           your_share_index: item.shares.find(entry => entry.profile_id === profile.id)?.share_index ?? null,
           shares: item.shares.map(entry => ({ share_index: entry.share_index, amount_raw: entry.amount_raw, status: entry.status, payer_address: entry.payer_address, confirmed_tx_hash: entry.confirmed_tx_hash })),
+          payouts: item.payouts ?? [],
         }] : []) })
       }
       if (path === '/api/splits' && req.method === 'POST') {
         if (!deps.products) throw new ApiError(503, 'Split service is not configured.')
         const recipient = await resolveProfile(body.recipient)
+        const extraRecipients = Array.isArray(body.recipients) && body.recipients.length > 1 ? body.recipients : null
+        if (body.recipients !== undefined && (!Array.isArray(body.recipients) || body.recipients.length < 2 || body.recipients.length > 20)) throw new ApiError(400, 'Add 2 to 20 recipients.')
+        const resolvedRecipients = extraRecipients ? await Promise.all(extraRecipients.map(async item => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) throw new ApiError(400, 'Recipient is invalid.')
+          const row = item as Record<string, unknown>
+          return { ...(await resolveProfile(row.recipient)), amount: amountRaw(row.amountRaw) }
+        })) : null
+        if (resolvedRecipients) {
+          if (resolvedRecipients[0].address.toLowerCase() !== recipient.address.toLowerCase()) throw new ApiError(400, 'The first recipient does not match.')
+          if (new Set(resolvedRecipients.map(item => item.address.toLowerCase())).size !== resolvedRecipients.length) throw new ApiError(409, 'Each recipient must be different.')
+        }
         const kind = body.kind === 'open' ? 'open' : body.kind === 'named' ? 'named' : null
         if (!kind) throw new ApiError(400, 'Split type is invalid.')
         const total = amountRaw(body.totalRaw)
+        if (resolvedRecipients && resolvedRecipients.reduce((sum, item) => sum + item.amount, 0n) !== total) throw new ApiError(400, 'Recipient amounts must add up to the split total.')
         const title = requiredText(body.title, 'Title', 120)
         const description = typeof body.description === 'string' && body.description.trim().length <= 500 ? body.description.trim() : ''
         let members: ProductProfile[] = []
         let participantCount: number
+        const includeOrganizer = kind === 'named' && body.includeOrganizer !== false
         if (kind === 'named') {
-          if (!Array.isArray(body.participants) || body.participants.length < 1 || body.participants.length > 100) throw new ApiError(400, 'Add 1 to 100 participants.')
+          const minParticipants = resolvedRecipients && includeOrganizer ? 0 : 1
+          if (!Array.isArray(body.participants) || body.participants.length < minParticipants || body.participants.length > 100) throw new ApiError(400, 'Add 1 to 100 participants, or include yourself for a multi-recipient split.')
           const resolved = await Promise.all(body.participants.map(value => resolveProfile(value)))
           const addresses = resolved.map(item => item.address.toLowerCase())
           if (new Set(addresses).size !== addresses.length) throw new ApiError(409, 'Each participant must resolve to a different wallet.')
@@ -450,19 +468,21 @@ export function createHandler(deps: Dependencies) {
         } else {
           if (typeof body.shareCount !== 'number') throw new ApiError(400, 'Share count is invalid.')
           participantCount = body.shareCount
+          if (resolvedRecipients && participantCount > 100) throw new ApiError(400, 'Multi-recipient splits support at most 100 open shares.')
         }
         const groupId = kind === 'named' ? await accessibleGroupId(body.groupId, profile.id) : null
-        const includeOrganizer = kind === 'named' && body.includeOrganizer !== false
+        if (resolvedRecipients && includeOrganizer && resolvedRecipients.some(item => item.profile.id === profile.id)) throw new ApiError(400, 'Remove your own wallet from recipients when you are included as a payer.')
         const recipientIsOrganizer = recipient.profile.id === profile.id
         const divided = divideShares(total, participantCount + (includeOrganizer ? 1 : 0))
         const payerProfiles = kind === 'named'
           ? includeOrganizer && !recipientIsOrganizer ? [profile, ...members] : members
           : Array.from({ length: participantCount }, () => null)
-        const payableAmounts = includeOrganizer && recipientIsOrganizer ? divided.slice(1) : divided
+        const matrix = resolvedRecipients ? allocateSplitPayouts(resolvedRecipients.map(item => item.amount), payerProfiles.length) : null
+        const payableAmounts = matrix ? matrix.map(row => row.reduce((sum, value) => sum + value, 0n).toString()) : includeOrganizer && recipientIsOrganizer ? divided.slice(1) : divided
+        const payouts = matrix?.flatMap((row, shareIndex) => row.flatMap((amount, payoutIndex) => amount > 0n ? [{ shareIndex, payoutIndex, recipient: resolvedRecipients![payoutIndex].address, amount: amount.toString() }] : []))
         const created = await deps.products.createSplit(
           profile.id, groupId, recipient.address, kind, total.toString(), title, description,
-          payerProfiles,
-          payableAmounts,
+          payerProfiles, payableAmounts, payouts,
         )
         const stored = await deps.products.split(created.id)
         if (kind === 'named') await sendPush(members.map(item => item.id), {
@@ -472,7 +492,7 @@ export function createHandler(deps: Dependencies) {
         return reply(201, stored)
       }
 
-      const shareAction = /^\/api\/splits\/([0-9a-f-]{36})\/shares\/(\d+)\/(claim|confirm)$/.exec(path)
+      const shareAction = /^\/api\/splits\/([0-9a-f-]{36})\/shares\/(\d+)(?:\/payouts\/(\d+))?\/(claim|confirm)$/.exec(path)
       if (req.method === 'POST' && shareAction) {
         if (!deps.products || !uuid.test(shareAction[1])) throw new ApiError(404, 'Split not found.')
         const index = Number(shareAction[2])
@@ -483,8 +503,10 @@ export function createHandler(deps: Dependencies) {
         const found = await deps.products.split(shareAction[1])
         const selected = found?.shares.find(item => item.share_index === index)
         if (!found || !selected) throw new ApiError(404, 'Split share not found.')
+        if (found.split.recipient_count > 1 && !found.payouts?.length) throw new ApiError(503, 'Split recipient payments are unavailable.')
         if (selected.profile_id && selected.profile_id !== profile.id) throw new ApiError(403, 'This named share belongs to another JANUS account.')
-        if (shareAction[3] === 'claim') {
+        if (shareAction[4] === 'claim') {
+          if (shareAction[3] !== undefined) throw new ApiError(400, 'Claim the share, not an individual payout.')
           const claimed = await deps.products.claimShare(found.split.id, index, profile.id, wallet.toLowerCase())
           if (!claimed) throw new ApiError(409, 'This share is no longer available.')
           return reply(200, { share: claimed })
@@ -492,23 +514,32 @@ export function createHandler(deps: Dependencies) {
         if (!deps.verifyTransfer) throw new ApiError(503, 'Payment verification is not configured.')
         if (typeof body.hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(body.hash)) throw new ApiError(400, 'Transaction hash is invalid.')
         if (selected.profile_id !== profile.id || selected.wallet_address?.toLowerCase() !== wallet.toLowerCase()) throw new ApiError(409, 'Claim this share before confirming its payment.')
-        const valid = await deps.verifyTransfer(body.hash as Hash, wallet, walletAddress(found.split.recipient_address), BigInt(selected.amount_raw))
+        const multi = (found.payouts ?? []).length > 0
+        const payoutIndex = shareAction[3] === undefined ? null : Number(shareAction[3])
+        if (multi !== (payoutIndex !== null)) throw new ApiError(400, 'Use the payment route shown for this split.')
+        const payout = payoutIndex === null ? null : found.payouts.find(item => item.share_index === index && item.payout_index === payoutIndex)
+        if (multi && (!payout || payout.confirmed_tx_hash)) throw new ApiError(409, 'This recipient payment is unavailable or already confirmed.')
+        const payTo = payout?.recipient_address ?? found.split.recipient_address
+        const payAmount = payout ? BigInt(payout.amount_raw) : BigInt(selected.amount_raw)
+        const valid = await deps.verifyTransfer(body.hash as Hash, wallet, walletAddress(payTo), payAmount)
         if (!valid) throw new ApiError(400, 'The transaction does not contain the expected Arc USDC payment.')
-        const confirmed = await deps.products.confirmShare(found.split.id, index, profile.id, wallet.toLowerCase(), body.hash.toLowerCase())
-        if (!confirmed) throw new ApiError(409, 'This share could not be confirmed.')
-        const recipient = await deps.products.profileByWallet(found.split.recipient_address.toLowerCase())
-        const display = formatUnits(BigInt(selected.amount_raw), 6) + ' USDC'
+        const confirmation = payoutIndex === null
+          ? { complete: await deps.products.confirmShare(found.split.id, index, profile.id, wallet.toLowerCase(), body.hash.toLowerCase()) }
+          : await deps.products.confirmPayout(found.split.id, index, payoutIndex, profile.id, wallet.toLowerCase(), body.hash.toLowerCase())
+        if (!confirmation || !confirmation.complete && payoutIndex === null) throw new ApiError(409, 'This recipient payment could not be confirmed.')
+        const recipient = await deps.products.profileByWallet(payTo.toLowerCase())
+        const display = formatUnits(payAmount, 6) + ' USDC'
         const url = '/#split=' + found.split.id
         await sendPush([profile.id], {
-          eventKey: 'split-share-paid:' + found.split.id + ':' + index,
+          eventKey: 'split-share-paid:' + found.split.id + ':' + index + ':' + (payoutIndex ?? 'single'),
           title: 'Split share paid', body: 'You paid ' + display + ' for ' + found.split.title + '.', url,
         })
         const observers = [...new Set([found.split.organizer_id, recipient?.id].filter((id): id is string => Boolean(id && id !== profile.id)))]
         await sendPush(observers, {
-          eventKey: 'split-share-received:' + found.split.id + ':' + index,
+          eventKey: 'split-share-received:' + found.split.id + ':' + index + ':' + (payoutIndex ?? 'single'),
           title: 'Split share paid', body: '@' + profile.username + ' paid ' + display + ' for ' + found.split.title + '.', url,
         })
-        return reply(200, { confirmed: true })
+        return reply(200, { confirmed: true, complete: confirmation.complete })
       }
       throw new ApiError(404, 'Not found.')
     } catch (error) {

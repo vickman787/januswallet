@@ -6,6 +6,7 @@ import { useJanusAuth } from '../auth/AccountProvider'
 import { janusApi } from '../lib/api'
 import { mergeGroupParticipants, participantInputs, participantsForGroup, visibleJanusGroups, type JanusGroupsData } from '../lib/groups'
 import { parseUsdcInput, splitUsdc } from '../lib/payments'
+import { allocateSplitPayouts } from '../lib/split-payouts'
 import { resolveRecipientInput, type ResolvedRecipient } from '../lib/recipients'
 import { useWalletIdentity } from '../hooks/useWalletIdentity'
 import Dialog from './Dialog'
@@ -33,6 +34,11 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
     }).catch(() => { /* Keep the exact wallet address if username lookup is unavailable. */ })
     return () => { active = false }
   }, [address, ownIdentity.data?.username])
+  const [multiRecipient, setMultiRecipient] = useState(false)
+  const [extraRecipients, setExtraRecipients] = useState('')
+  const [recipientAmount, setRecipientAmount] = useState('')
+  const [allocation, setAllocation] = useState<'equal' | 'custom'>('equal')
+  const [recipientTargets, setRecipientTargets] = useState<{ recipient: string; amountRaw: string }[]>()
   const [amount, setAmount] = useState('')
   const [count, setCount] = useState('2')
   const [participants, setParticipants] = useState('')
@@ -63,6 +69,7 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
     setOrganizerShare(undefined)
     setOrganizerPaysRecipient(false)
     setCreated(undefined)
+    setRecipientTargets(undefined)
   }
   function selectGroup(nextId: string) {
     setError('')
@@ -98,19 +105,38 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
     try {
       const total = parseUsdcInput(amount)
       const resolvedRecipient = await resolveRecipientInput(recipient)
+      let targets: { recipient: string; amountRaw: string }[] | undefined
+      if (multiRecipient) {
+        const lines = extraRecipients.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+        if (lines.length < 1 || lines.length > 19) throw new Error('Add 1 to 19 additional recipients.')
+        const parsed = lines.map(line => {
+          const parts = line.split(',').map(part => part.trim())
+          if (parts.length !== (allocation === 'custom' ? 2 : 1) || !parts[0]) throw new Error(allocation === 'custom' ? 'Enter each additional recipient as @username, amount.' : 'Enter one recipient per line.')
+          return { input: parts[0], amount: parts[1] }
+        })
+        const resolved = await Promise.all(parsed.map(row => resolveRecipientInput(row.input)))
+        const addresses = [resolvedRecipient.address, ...resolved.map(row => row.address.toLowerCase())]
+        if (new Set(addresses.map(value => value.toLowerCase())).size !== addresses.length) throw new Error('Each pay recipient must be different.')
+        const values = allocation === 'equal' ? splitUsdc(total, addresses.length) : [parseUsdcInput(recipientAmount), ...parsed.map(row => parseUsdcInput(row.amount))]
+        if (values.reduce((sum, value) => sum + value, 0n) !== total) throw new Error('Recipient amounts must add up to Total USDC.')
+        targets = [{ recipient, amountRaw: values[0].toString() }, ...parsed.map((row, index) => ({ recipient: row.input, amountRaw: values[index + 1].toString() }))]
+        setRecipientTargets(targets)
+        if (kind === 'named' && includeOrganizer && [resolvedRecipient, ...resolved].some(row => row.address.toLowerCase() === address?.toLowerCase())) throw new Error('Remove your wallet from recipients when you are included as a payer.')
+      }
       if (kind === 'open') {
-        setResults(splitUsdc(total, Number(count)).map(share => ({ share })))
+        const shares = targets ? allocateSplitPayouts(targets.map(row => BigInt(row.amountRaw)), Number(count)).map(row => row.reduce((sum, value) => sum + value, 0n)) : splitUsdc(total, Number(count))
+        setResults(shares.map(share => ({ share })))
         return
       }
       const entries = inputs()
-      if (!entries.length || entries.length > 100) throw new Error('Add 1 to 100 participant usernames or wallet addresses.')
+      if ((!entries.length && !(multiRecipient && includeOrganizer)) || entries.length > 100) throw new Error('Add 1 to 100 participant usernames or wallet addresses, or include yourself for multiple recipients.')
       const resolved = await Promise.all(entries.map(input => resolveRecipientInput(input)))
       const unique = new Set(resolved.map(item => item.address.toLowerCase()))
       if (unique.size !== resolved.length) throw new Error('Each participant must resolve to a different wallet.')
       const organizerWallets = new Set([...(address ? [address] : []), ...auth.wallets.map(wallet => wallet.address)].map(wallet => wallet.toLowerCase()))
       if (resolved.some(item => organizerWallets.has(item.address.toLowerCase()))) throw new Error('Use Include me for the organizer. Remove your own username or wallet from Participants.')
       const recipientIsOrganizer = organizerWallets.has(resolvedRecipient.address.toLowerCase())
-      const shares = splitUsdc(total, resolved.length + (includeOrganizer ? 1 : 0))
+      const shares = targets ? allocateSplitPayouts(targets.map(row => BigInt(row.amountRaw)), resolved.length + (includeOrganizer ? 1 : 0)).map(row => row.reduce((sum, value) => sum + value, 0n)) : splitUsdc(total, resolved.length + (includeOrganizer ? 1 : 0))
       if (includeOrganizer) {
         setOrganizerShare(shares[0])
         setOrganizerPaysRecipient(!recipientIsOrganizer)
@@ -137,6 +163,7 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
           groupId: kind === 'named' && selectedGroupId ? selectedGroupId : undefined,
           includeOrganizer: kind === 'named' ? includeOrganizer : undefined,
           shareCount: kind === 'open' ? Number(count) : undefined,
+          recipients: recipientTargets,
         },
       })
       setCreated(stored)
@@ -166,9 +193,20 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
       </fieldset>
       <label className="field-label">Title<input className="janus-input" maxLength={120} value={title} onChange={event => { setTitle(event.target.value); resetReview() }} placeholder="Dinner" required /></label>
       <label className="field-label">Description, optional<input className="janus-input" maxLength={500} value={description} onChange={event => { setDescription(event.target.value); resetReview() }} placeholder="Friday dinner split" /></label>
-      <label className="field-label">Pay recipient<input className="janus-input mono" value={recipient} onChange={event => { recipientEdited.current = true; setRecipient(event.target.value); resetReview() }} placeholder="@username or 0x…" required />
-        <span className="block mt-2 text-xs text-[#A8B0BE]">Each payable share goes to this verified JANUS wallet.</span>
+      <label className="field-label">{multiRecipient ? 'First pay recipient' : 'Pay recipient'}<input className="janus-input mono" value={recipient} onChange={event => { recipientEdited.current = true; setRecipient(event.target.value); resetReview() }} placeholder="@username or 0x…" required />
+        <span className="block mt-2 text-xs text-[#A8B0BE]">{multiRecipient ? 'Each payable share is divided among all listed recipients.' : 'Each payable share goes to this verified JANUS wallet.'}</span>
       </label>
+      <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={multiRecipient} onChange={event => { setMultiRecipient(event.target.checked); if (event.target.checked && !recipientEdited.current) { recipientEdited.current = true; setRecipient('') } resetReview() }} /> Multiple pay recipients</label>
+      {multiRecipient && <>
+        <fieldset className="grid grid-cols-2 gap-2"><legend className="field-label mb-2">Recipient amounts</legend>
+          <button type="button" className={allocation === 'equal' ? 'janus-primary' : 'janus-secondary'} onClick={() => { setAllocation('equal'); resetReview() }}>Equal</button>
+          <button type="button" className={allocation === 'custom' ? 'janus-primary' : 'janus-secondary'} onClick={() => { setAllocation('custom'); resetReview() }}>Individual</button>
+        </fieldset>
+        {allocation === 'custom' && <label className="field-label">First recipient amount (USDC)<input className="janus-input" inputMode="decimal" value={recipientAmount} onChange={event => { setRecipientAmount(event.target.value); resetReview() }} placeholder="0.00" required /></label>}
+        <label className="field-label">Additional recipients<textarea className="janus-input min-h-28" value={extraRecipients} onChange={event => { setExtraRecipients(event.target.value); resetReview() }} placeholder={allocation === 'custom' ? '@alice, 5.00\n@bob, 3.00' : '@alice\n@bob'} required />
+          <span className="block mt-2 text-xs text-[#A8B0BE]">{allocation === 'custom' ? 'One @username, amount per line.' : 'One verified username or wallet address per line.'}</span>
+        </label>
+      </>}
       <label className="field-label">Total USDC<input className="janus-input" inputMode="decimal" value={amount} onChange={event => { setAmount(event.target.value); resetReview() }} placeholder="0.00" required /></label>
       {kind === 'named' ? <>
         <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 cursor-pointer">
@@ -186,16 +224,17 @@ export default function SplitPlanner({ onClose, onOpenDocs }: { onClose: () => v
         {groupNotice && <p role="status" className="text-xs text-emerald-300">{groupNotice}</p>}
         <label className="field-label">Participants
           <textarea className="janus-input min-h-28" value={participants} onChange={event => { setParticipants(event.target.value); resetReview() }}
-            placeholder={'@alice\n0x1234…\n@bob'} required />
+            placeholder={'@alice\n0x1234…\n@bob'} required={!(multiRecipient && includeOrganizer)} />
           <span className="block mt-2 text-xs text-[#A8B0BE]">Enter every other participant once, using a verified username or wallet address.</span>
         </label>
-      </> : <label className="field-label">Number of open shares<input className="janus-input" type="number" min="1" max="1000" step="1" value={count} onChange={event => { setCount(event.target.value); resetReview() }} required /></label>}
+      </> : <label className="field-label">Number of open shares<input className="janus-input" type="number" min="1" max={multiRecipient ? "100" : "1000"} step="1" value={count} onChange={event => { setCount(event.target.value); resetReview() }} required /></label>}
       {error && <p role="alert" className="text-red-300 text-sm">{error}</p>}
       {!created && <button className="janus-primary w-full" disabled={busy} type="submit">{busy ? 'Resolving participants…' : results ? 'Recalculate shares' : 'Review shares'}</button>}
     </form>
     {results && !created && <div className="mt-5 space-y-3 text-sm" role="status">
       <p>{organizerShare !== undefined ? `1 organizer share and ${results.length} participant ${results.length === 1 ? 'share' : 'shares'}` : `${results.length} participant ${results.length === 1 ? 'share' : 'shares'}`} total exactly {formatUnits(results.reduce((sum, row) => sum + row.share, organizerShare ?? 0n), 6)} USDC.</p>
       <p className="text-[#A8B0BE]">Review every resolved wallet before creating the split.</p>
+      {recipientTargets && <div className="rounded-xl border border-white/10 p-3"><p className="font-medium mb-2">Pay recipients</p>{recipientTargets.map((row, index) => <p key={index} className="flex justify-between gap-3 break-all"><span>{row.recipient}</span><span className="tabnum whitespace-nowrap">{formatUnits(BigInt(row.amountRaw), 6)} USDC</span></p>)}</div>}
       <ol className="max-h-64 overflow-auto space-y-3">
         {organizerShare !== undefined && <li className="rounded-xl border border-[#4D6BFF]/30 bg-[#4D6BFF]/5 p-3">
           <div className="flex justify-between gap-3"><span>Organizer · included</span><span className="tabnum">{formatUnits(organizerShare, 6)} USDC</span></div>
